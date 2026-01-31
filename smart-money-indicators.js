@@ -873,9 +873,31 @@ window.SmartMoneyIndicators = (function() {
     };
   }
 
+  /**
+   * Momentum & Velocity Delta
+   * Measures price acceleration to confirm impulse
+   */
+  function calculateVelocityDelta(candles) {
+    if (!candles || candles.length < 10) return { velocity: 0, delta: 0, aligned: 'NONE' };
+
+    // Recent velocity (last 3 candles)
+    const vNow = (candles[candles.length - 1].c - candles[candles.length - 4].c) / 3;
+    // Previous velocity (candles 4 to 6 ago)
+    const vPrev = (candles[candles.length - 4].c - candles[candles.length - 7].c) / 3;
+
+    const delta = vNow - vPrev;
+
+    let aligned = 'NONE';
+    if (vNow > 0 && delta > 0) aligned = 'BULLISH';
+    if (vNow < 0 && delta < 0) aligned = 'BEARISH';
+
+    return { velocity: vNow, delta: delta, aligned: aligned };
+  }
+
   // Public API
   return {
     analyzeSmartMoney,
+    calculateVelocityDelta,
     detectMarketStructure,
     findSwingPoints,
     detectEqualLevels,
