@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Pocket Scout v12 - Smart Money & Price Action",
+  "version": "12.3.0",
+  "description": "Pure Smart Money & Price Action Engine. Payout filter (≥80%), confidence filter (≥47%), NEUTRAL H1 penalty, 3min entry time. BOS/CHoCH, Order Blocks, FVG, Liquidity analysis.",
+  "permissions": ["storage"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://pocketoption.com/*"],
+      "js": [
+        "technical-indicators.js",
+        "circular-buffer.js",
+        "smart-money-indicators.js",
+        "pocket-scout-v12-engine.js",
+        "content.js"
+      ],
+      "run_at": "document_end"
+    }
+  ]
+}

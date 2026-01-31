@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { width: 420px; padding: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; }
+    .header { font-size: 18px; font-weight: 700; color: #60a5fa; margin-bottom: 4px; }
+    .subheader { font-size: 11px; opacity: 0.75; margin-bottom: 12px; }
+    .status-bar { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-weight: 600; text-align: center; }
+    .status-ok { color: #4ade80; border-color: #22c55e; }
+    .status-warmup { color: #facc15; border-color: #eab308; }
+    .status-error { color: #f87171; border-color: #ef4444; }
+    .controls { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+    .control-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .control-row:not(:last-child) { margin-bottom: 10px; }
+    select, button { background: #334155; color: #e2e8f0; border: 1px solid #64748b; border-radius: 6px; padding: 6px 10px; font-weight: 600; cursor: pointer; }
+    .control-row > button { flex-grow: 1; }
+    button.primary { background: #3b82f6; border-color: #2563eb; color: #fff; }
+    button.danger { background: #ef4444; border-color: #b91c1c; color: #fff; }
+    .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .metric { padding: 10px; background: #1e293b; border-radius: 8px; border: 1px solid #334155; }
+    .metric-label { font-size: 11px; opacity: 0.7; }
+    .metric-value { font-size: 18px; font-weight: 700; margin-top: 4px; }
+    .last-signal { margin-top: 12px; padding: 12px; border-radius: 8px; background: #111827; border: 1px solid #1f2937; }
+    .footer-info { text-align: center; font-size: 11px; opacity: 0.6; margin-top: 14px; }
+    
+    /* Multi-pair prices section */
+    .pairs-section { margin-top: 12px; }
+    .pairs-header { font-weight: 700; margin-bottom: 8px; color: #60a5fa; font-size: 14px; }
+    .pairs-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .pair-card { background: #1e293b; border: 1px solid #334155; border-radius: 6px; padding: 8px 10px; }
+    .pair-card.frozen { border-color: #f87171; background: #3d1a1a; }
+    .pair-card.low-payout { opacity: 0.6; border-color: #64748b; }
+    .pair-name { font-size: 11px; color: #94a3b8; font-weight: 600; }
+    .pair-price { font-size: 14px; font-weight: 700; color: #e2e8f0; margin-top: 2px; }
+    .pair-status { font-size: 9px; color: #64748b; margin-top: 2px; }
+    .pair-status.ready { color: #4ade80; }
+    .pair-status.warmup { color: #facc15; }
+    .pair-status.no-data { color: #f87171; font-weight: 700; }
+    .payout-eligible { color: #4ade80; font-weight: 700; }
+    .payout-low { color: #f87171; font-weight: 400; }
+  </style>
+</head>
+<body>
+  <div class="header">Pocket Scout Smart Money & Price Action</div>
+  <div class="subheader">v12.3 | SMC + Payout ≥80% + Conf ≥47% + H1 Penalty | 3min Entry</div>
+
+  <div id="status" class="status-bar status-warmup">...</div>
+
+  <div class="controls">
+    <div class="control-row">
+      <span>Signal Interval</span>
+      <select id="signalInterval">
+        <option value="1">1 minute</option>
+        <option value="2">2 minutes</option>
+        <option value="3">3 minutes</option>
+        <option value="5">5 minutes</option>
+      </select>
+    </div>
+    <div class="control-row">
+      <span>Warmup Period</span>
+      <select id="warmupCandles">
+        <option value="25">25 candles (Fast)</option>
+        <option value="35">35 candles</option>
+        <option value="50" selected>50 candles (Stable)</option>
+      </select>
+    </div>
+    <div class="control-row">
+        <button id="exportLogs" class="primary">Export Logs</button>
+        <button id="resetHistory" class="danger">Reset Stats</button>
+    </div>
+  </div>
+
+  <div class="metrics" id="metrics"></div>
+  
+  <div class="pairs-section">
+    <div class="pairs-header">📊 Currency Pairs (10)</div>
+    <div class="pairs-grid" id="pairsGrid">
+      <!-- Pairs will be dynamically inserted here -->
+    </div>
+  </div>
+  
+  <div class="last-signal" id="lastSignal">
+    <div style="font-weight:700; margin-bottom:4px;">Last Signal</div>
+    <div id="lastSignalContent" style="opacity:0.8;">Waiting...</div>
+  </div>
+  <div id="pairsInfo" class="footer-info">Active Pairs: 0 / Ready: 0</div>
+  <div id="highConfStats" class="footer-info" style="margin-top: 4px; font-weight: 600; color: #4ade80;">≥50% Conf: 0 signals | WR: --</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
