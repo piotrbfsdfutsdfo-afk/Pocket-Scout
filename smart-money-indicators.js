@@ -141,16 +141,36 @@ window.SmartMoneyIndicators = (function() {
     
     // BOS: Breaking structure in trend direction
     if (trend === 'BULLISH' && lastCandle.c > lastSwingHigh.price) {
-      lastBOS = { type: 'BULLISH_BOS', price: lastSwingHigh.price, time: lastCandle.t };
+      lastBOS = {
+        type: 'BULLISH_BOS',
+        price: lastSwingHigh.price,
+        time: lastCandle.t,
+        bqi: calculateBQI(lastCandle, candles.slice(0, -1))
+      };
     } else if (trend === 'BEARISH' && lastCandle.c < lastSwingLow.price) {
-      lastBOS = { type: 'BEARISH_BOS', price: lastSwingLow.price, time: lastCandle.t };
+      lastBOS = {
+        type: 'BEARISH_BOS',
+        price: lastSwingLow.price,
+        time: lastCandle.t,
+        bqi: calculateBQI(lastCandle, candles.slice(0, -1))
+      };
     }
     
     // CHoCH: Breaking structure against trend (reversal signal)
     if (trend === 'BULLISH' && lastCandle.c < lastSwingLow.price) {
-      lastCHoCH = { type: 'BEARISH_CHoCH', price: lastSwingLow.price, time: lastCandle.t };
+      lastCHoCH = {
+        type: 'BEARISH_CHoCH',
+        price: lastSwingLow.price,
+        time: lastCandle.t,
+        bqi: calculateBQI(lastCandle, candles.slice(0, -1))
+      };
     } else if (trend === 'BEARISH' && lastCandle.c > lastSwingHigh.price) {
-      lastCHoCH = { type: 'BULLISH_CHoCH', price: lastSwingHigh.price, time: lastCandle.t };
+      lastCHoCH = {
+        type: 'BULLISH_CHoCH',
+        price: lastSwingHigh.price,
+        time: lastCandle.t,
+        bqi: calculateBQI(lastCandle, candles.slice(0, -1))
+      };
     }
 
     return { trend, structure, lastBOS, lastCHoCH, swingHighs, swingLows };
@@ -840,8 +860,37 @@ window.SmartMoneyIndicators = (function() {
     const marketStructure = detectMarketStructure(candles);
     const equalLevels = detectEqualLevels(candles);
     const sweeps = detectLiquiditySweeps(candles);
-    const orderBlocks = detectOrderBlocks(candles);
-    const imbalance = detectImbalance(candles);
+    const orderBlocksRaw = detectOrderBlocks(candles);
+    const imbalanceRaw = detectImbalance(candles);
+
+    // Mitigation tracking: filter out zones that have already been hit
+    const lastCandle = candles[candles.length - 1];
+
+    const filterMitigated = (zones, isBullish) => {
+      return zones.map(z => {
+        // Check if any candle since zone creation has entered it
+        const zoneIndex = candles.findIndex(c => c.t === z.time);
+        if (zoneIndex === -1) return { ...z, mitigated: false };
+
+        const subsequentCandles = candles.slice(zoneIndex + 1);
+        const isMitigated = subsequentCandles.some(c => {
+          if (isBullish) return c.l <= (z.high || z.top);
+          else return c.h >= (z.low || z.bottom);
+        });
+
+        return { ...z, mitigated: isMitigated };
+      });
+    };
+
+    const orderBlocks = {
+      bullishOB: filterMitigated(orderBlocksRaw.bullishOB, true),
+      bearishOB: filterMitigated(orderBlocksRaw.bearishOB, false)
+    };
+
+    const imbalance = {
+      bullishIMB: filterMitigated(imbalanceRaw.bullishIMB, true),
+      bearishIMB: filterMitigated(imbalanceRaw.bearishIMB, false)
+    };
     
     // New SMC elements
     const breakerBlocks = detectBreakerBlocks(candles, orderBlocks, sweeps);
@@ -869,7 +918,9 @@ window.SmartMoneyIndicators = (function() {
       rejectionBlocks,
       inducement,
       premiumDiscount,
-      ote
+      ote,
+      marketPhase: detectMarketPhase(candles),
+      velocityDelta: calculateVelocityDelta(candles)
     };
   }
 
@@ -894,10 +945,55 @@ window.SmartMoneyIndicators = (function() {
     return { velocity: vNow, delta: delta, aligned: aligned };
   }
 
+  /**
+   * Breakout Quality Index (BQI)
+   * Validates if a structural break (BOS/CHoCH) is high quality
+   * Returns score 0-100
+   */
+  function calculateBQI(candle, previousCandles) {
+    if (!candle || !previousCandles || previousCandles.length < 5) return 0;
+
+    const bodySize = Math.abs(candle.c - candle.o);
+    const totalRange = candle.h - candle.l;
+    const bodyRatio = bodySize / (totalRange || 0.00001);
+
+    // 1. Body Quality (60% weight): Prefer large bodies with small wicks
+    let quality = bodyRatio * 60;
+
+    // 2. Relative Size (40% weight): Compare to average of last 5 candles
+    const avgRange = previousCandles.slice(-5).reduce((sum, c) => sum + (c.h - c.l), 0) / 5;
+    const sizeMultiplier = totalRange / (avgRange || 0.00001);
+
+    quality += Math.min(40, sizeMultiplier * 10);
+
+    return Math.round(quality);
+  }
+
+  /**
+   * Detect Market Narrative Phase
+   * Phases: EXPANSION, CONTRACTION, REVERSAL, RANGING
+   */
+  function detectMarketPhase(candles) {
+    if (candles.length < 20) return 'UNKNOWN';
+
+    const atr = calculateATR(candles, 14);
+    const last5 = candles.slice(-5);
+    const avg5Range = last5.reduce((sum, c) => sum + (c.h - c.l), 0) / 5;
+
+    // Expansion: volatility increasing, candles larger than ATR
+    if (avg5Range > atr * 1.2) return 'EXPANSION';
+    // Contraction: volatility decreasing, candles smaller than ATR
+    if (avg5Range < atr * 0.7) return 'CONTRACTION';
+
+    return 'RANGING';
+  }
+
   // Public API
   return {
     analyzeSmartMoney,
     calculateVelocityDelta,
+    calculateBQI,
+    detectMarketPhase,
     detectMarketStructure,
     findSwingPoints,
     detectEqualLevels,

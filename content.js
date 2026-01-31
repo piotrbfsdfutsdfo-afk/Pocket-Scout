@@ -12,7 +12,7 @@
 (function() {
   'use strict';
 
-  const VERSION = '12.3.0';
+  const VERSION = '13.0.0';
   const FEED_KEY = 'PS_AT_FEED';
   const DATASTREAM_FEED_KEY = 'POCKET_DATASTREAM_FEED';
   const HISTORY_LIMIT = 50;
@@ -22,6 +22,8 @@
   
   // Map of pair -> CircularBuffer (one per pair)
   const pairBuffers = {};
+  // Map of pair -> Engine state (v13)
+  const pairEngineStates = {};
   // Map of pair -> OHLC array
   const pairOhlcM1 = {};
   // Map of pair -> last price
@@ -444,8 +446,9 @@
    */
   function generateSignalCandidateForPair(pair) {
     if (!pairWarmupComplete[pair]) return null;
-    if (!window.V12Engine) {
-        console.error(`[PS v${VERSION}] FATAL: V12Engine not available.`);
+    const engine = window.V13Engine || window.V12Engine; // Support both for transition
+    if (!engine) {
+        console.error(`[PS v${VERSION}] FATAL: Signal Engine not available.`);
         return null;
     }
     
@@ -457,23 +460,30 @@
     }
 
     const engineCandles = [...ohlcM1];
-    let engineOutput = window.V12Engine.generateSignal(engineCandles, pair);
-    if (!engineOutput) {
+    // Pass and receive updated state for v13 engine
+    let { signal, updatedState } = engine.generateSignal(engineCandles, pair, pairEngineStates[pair]);
+
+    // Persist state
+    if (updatedState) {
+      pairEngineStates[pair] = updatedState;
+    }
+
+    if (!signal) {
       return null;
     }
 
     // Include pair name in the signal for Auto Trader
     return { 
       pair: pair,
-      action: engineOutput.action, 
-      confidence: engineOutput.confidence, 
-      duration: engineOutput.tradeDuration, 
-      durationReason: engineOutput.durationReason, 
-      reasons: engineOutput.reasons, 
+      action: signal.action,
+      confidence: signal.confidence,
+      duration: signal.tradeDuration,
+      durationReason: signal.durationReason,
+      reasons: signal.reasons,
       timestamp: Date.now(), 
       entryPrice: lastPrice, 
       result: null,
-      indicatorValues: engineOutput.indicatorValues
+      indicatorValues: signal.indicatorValues
     };
   }
 
@@ -714,9 +724,10 @@
       highConfLosses = 0;
       signalHistory = []; 
       mostRecentSignal = null; // Reset most recent signal
-      // Reset per-pair last signals
+      // Reset per-pair last signals and engine states
       for (const pair of Object.keys(pairLastSignals)) {
         pairLastSignals[pair] = null;
+        pairEngineStates[pair] = null;
       }
       saveState();
       sendResponse({ success: true });
