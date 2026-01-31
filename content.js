@@ -15,14 +15,10 @@
   const VERSION = '12.3.0';
   const FEED_KEY = 'PS_AT_FEED';
   const DATASTREAM_FEED_KEY = 'POCKET_DATASTREAM_FEED';
-  const HISTORY_LIMIT = 500;
-  const DIAGNOSTIC_LOG_LIMIT = 2000;
+  const HISTORY_LIMIT = 50;
   const DEBUG_MODE = false; // Set to true for verbose logging
 
   // --- Multi-Pair State Variables ---
-  let diagnosticLog = [];
-  // Map for O(1) lookup of diagnostic entries by composite key (timestamp_pair)
-  const diagnosticLogMap = new Map();
   
   // Map of pair -> CircularBuffer (one per pair)
   const pairBuffers = {};
@@ -177,7 +173,6 @@
       highConfWins = stats.highConfWins || 0;
       highConfLosses = stats.highConfLosses || 0;
       signalHistory = JSON.parse(localStorage.getItem('PS_V10_HISTORY') || '[]');
-      diagnosticLog = JSON.parse(localStorage.getItem('PS_DIAGNOSTIC_LOG') || '[]');
       
       // Log loaded stats for debugging
       console.log(`[PS v${VERSION}] 📂 Stats loaded from PS_V10_STATS:`);
@@ -200,7 +195,6 @@
         };
         localStorage.setItem('PS_V10_STATS', JSON.stringify(stats));
         localStorage.setItem('PS_V10_HISTORY', JSON.stringify(signalHistory.slice(0, HISTORY_LIMIT)));
-        localStorage.setItem('PS_DIAGNOSTIC_LOG', JSON.stringify(diagnosticLog.slice(0, DIAGNOSTIC_LOG_LIMIT)));
         
         // Debug logging for Auto Trader integration
         if (DEBUG_MODE || totalSignals % 5 === 0) {
@@ -214,9 +208,9 @@
     } catch (e) {
         console.error(`[PS v${VERSION}] Failed to save state. Error:`, e);
         if (e.name === 'QuotaExceededError') {
-            console.warn(`[PS v${VERSION}] Quota exceeded. Pruning diagnostic log to recover.`);
-            diagnosticLog = diagnosticLog.slice(0, Math.floor(DIAGNOSTIC_LOG_LIMIT / 2));
-            localStorage.setItem('PS_DIAGNOSTIC_LOG', JSON.stringify(diagnosticLog));
+            console.warn(`[PS v${VERSION}] Quota exceeded. Pruning signal history to recover.`);
+            signalHistory = signalHistory.slice(0, Math.floor(HISTORY_LIMIT / 2));
+            localStorage.setItem('PS_V10_HISTORY', JSON.stringify(signalHistory));
         }
     }
   }
@@ -406,10 +400,17 @@
     // If we have pairs to rotate through
     if (rotationPairsList.length > 0) {
       const pairToSwitch = rotationPairsList[currentRotationIndex];
+      const dataId = pairToDataId(pairToSwitch);
+      const selector = `.assets-favorites-item[data-id="${dataId}"]`;
+      const element = document.querySelector(selector);
       
-      // Switch to the next pair in rotation
-      if (switchChartToPair(pairToSwitch)) {
-        if (DEBUG_MODE) console.log(`[PS v${VERSION}] 🔄 Auto-rotation: Switched to ${pairToSwitch} (${currentRotationIndex + 1}/${rotationPairsList.length})`);
+      // Only switch if not already active to minimize DOM operations
+      if (element && !element.classList.contains('active')) {
+        if (switchChartToPair(pairToSwitch)) {
+          if (DEBUG_MODE) console.log(`[PS v${VERSION}] 🔄 Auto-rotation: Switched to ${pairToSwitch} (${currentRotationIndex + 1}/${rotationPairsList.length})`);
+        }
+      } else if (DEBUG_MODE && element) {
+        console.log(`[PS v${VERSION}] 🔄 Auto-rotation: ${pairToSwitch} already active, skipping switch.`);
       }
       
       // Move to next pair, wrap around to start if at end
@@ -538,16 +539,6 @@
     // Log payout information
     console.log(`[PS v${VERSION}] 💰 Selected signal: ${bestCandidate.pair} | Conf: ${bestCandidate.confidence}% | Payout: ${bestPayout}%`);
     
-    // Create diagnostic data with indicator values
-    const diagnosticData = { 
-      timestamp: bestCandidate.timestamp, 
-      pair: bestCandidate.pair,
-      indicators: bestCandidate.indicatorValues, 
-      signal: null, // Will be set after creating clean signal
-      candidatesCount: candidates.length,
-      payout: bestPayout
-    };
-    
     // Create a clean signal object without indicatorValues and payout (for recording)
     const cleanSignal = {
       pair: bestCandidate.pair,
@@ -561,13 +552,11 @@
       result: bestCandidate.result
     };
     
-    diagnosticData.signal = cleanSignal;
-    
     if (DEBUG_MODE) console.log(`[PS v${VERSION}] 🎯 Selected best signal from ${candidates.length} filtered candidates:`);
-    recordSignal(cleanSignal.pair, cleanSignal, diagnosticData);
+    recordSignal(cleanSignal.pair, cleanSignal);
   }
 
-  function recordSignal(pair, signal, diagnosticData) {
+  function recordSignal(pair, signal) {
     pairLastSignals[pair] = signal;
     mostRecentSignal = signal; // Track most recent signal globally
     totalSignals++;
@@ -577,11 +566,6 @@
     }
     
     signalHistory.unshift(signal);
-    diagnosticLog.unshift(diagnosticData);
-    
-    // Add to Map for O(1) lookup during finalization
-    const logKey = `${diagnosticData.timestamp}_${pair}`;
-    diagnosticLogMap.set(logKey, diagnosticData);
     
     saveState();
     logSignal(pair, signal);
@@ -590,7 +574,7 @@
     
     // Trigger per-pair learning with the pair parameter
     if (window.AdaptiveLogic) {
-      window.AdaptiveLogic.checkLearningTrigger(totalSignals, diagnosticLog, pair);
+      window.AdaptiveLogic.checkLearningTrigger(totalSignals, [], pair);
     }
   }
 
@@ -629,10 +613,6 @@
       if (isWin) highConfWins++; else highConfLosses++;
     }
     
-    // Use Map for O(1) lookup instead of O(n) Array.find()
-    const logKey = `${signal.timestamp}_${pair}`;
-    const logEntry = diagnosticLogMap.get(logKey);
-    if (logEntry) logEntry.signal.result = signal.result;
     saveState();
   }
   
@@ -733,8 +713,6 @@
       highConfWins = 0;
       highConfLosses = 0;
       signalHistory = []; 
-      diagnosticLog = [];
-      diagnosticLogMap.clear(); // Clear the lookup map
       mostRecentSignal = null; // Reset most recent signal
       // Reset per-pair last signals
       for (const pair of Object.keys(pairLastSignals)) {
@@ -743,7 +721,7 @@
       saveState();
       sendResponse({ success: true });
     } else if (request.type === 'EXPORT_LOGS') {
-      sendResponse({ logs: diagnosticLog });
+      sendResponse({ logs: [] });
     } else if (request.type === 'GET_ADAPTIVE_STATS') {
       if (window.AdaptiveLogic) {
         sendResponse({ stats: window.AdaptiveLogic.getAdaptiveStats() });
@@ -768,22 +746,32 @@
     const prices = readPricesFromDataStream();
     if (prices) {
       const now = Date.now();
+      const currentMinute = Math.floor(now / 60000) * 60000;
+
       for (const [pair, price] of Object.entries(prices)) {
         if (typeof price === 'number' && price > 0) {
           const previousPrice = pairLastPrices[pair];
+          const buffer = getOrCreateBuffer(pair);
+          const lastCandle = buffer.getLatest();
+          const isNewMinute = !lastCandle || lastCandle.t !== currentMinute;
+
+          // Only update candles if price changed OR a new minute started
+          const shouldUpdate = previousPrice !== price || isNewMinute;
+
           pairLastPrices[pair] = price;
           
           // Track price update timestamp only if price actually changed
           if (previousPrice !== price) {
             pairLastPriceUpdate[pair] = now;
             // Immediately mark as unfrozen when price changes (proactive unfreezing)
-            // The checkForFrozenPrices() function will log the unfreeze event
             if (pairFrozenStatus[pair]) {
               pairFrozenStatus[pair] = false;
             }
           }
           
-          updateCandlesForPair(pair, price, now);
+          if (shouldUpdate) {
+            updateCandlesForPair(pair, price, now);
+          }
         }
       }
     }

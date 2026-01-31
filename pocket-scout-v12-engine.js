@@ -112,10 +112,10 @@ window.V12Engine = (function(indicators) {
   // ============================================
   
   const SCORES = {
-    // HIGH PRIORITY SETUPS (60-85 points) - OPTIMIZED
-    LIQUIDITY_SWEEP_REVERSAL: 85,  // INCREASED: Most critical catalyst (was 55)
-    BREAKER_BLOCK_CONFLUENCE: 75,  // INCREASED: Strong institutional confirmation (was 65)
-    FVG_DISPLACEMENT: 60,           // NEW: Proof of real institutional engagement
+    // HIGH PRIORITY SETUPS (60-95 points) - OPTIMIZED
+    LIQUIDITY_SWEEP_REVERSAL: 95,  // INCREASED: Most critical catalyst
+    BREAKER_BLOCK_CONFLUENCE: 85,  // INCREASED: Strong institutional confirmation
+    FVG_DISPLACEMENT: 70,           // NEW: Proof of real institutional engagement
     CHOCH_OB_CONFLUENCE: 45,        // REDUCED: Requires additional FVG validation (was 60)
     CHOCH_FVG_CONFLUENCE: 50,
     
@@ -123,16 +123,16 @@ window.V12Engine = (function(indicators) {
     PREMIUM_DISCOUNT_ALIGNED: 45,  // INCREASED: Critical context filter (was 32)
     
     // BEARISH COMPONENTS (Strong WR 56-59%)
-    BEARISH_ORDER_BLOCK: 40,       // WR 57.1%
+    BEARISH_ORDER_BLOCK: 50,       // INCREASED from 40
     BEARISH_REJECTION: 35,         // WR 56.9%
-    BEARISH_FVG: 30,               // WR 58.3%
+    BEARISH_FVG: 35,               // INCREASED from 30
     BEARISH_MITIGATION: 15,        // WR 57.1%
     BEARISH_INDUCEMENT: 12,        // WR 58.6%
     
     // BULLISH COMPONENTS - REBALANCED (removed asymmetry penalty)
-    BULLISH_ORDER_BLOCK: 40,       // Equalized with bearish
+    BULLISH_ORDER_BLOCK: 50,       // INCREASED from 40
     BULLISH_REJECTION: 35,         // Equalized with bearish
-    BULLISH_FVG: 30,               // Equalized with bearish
+    BULLISH_FVG: 35,               // INCREASED from 30
     BULLISH_MITIGATION: 15,        // Equalized with bearish
     BULLISH_INDUCEMENT: 12,        // Equalized with bearish
     
@@ -148,6 +148,7 @@ window.V12Engine = (function(indicators) {
     PRICE_ACTION_PATTERN: 25,
     TREND_ALIGNMENT: 20,
     LIQUIDITY_PROXIMITY: 15,
+    VELOCITY_DELTA_ALIGNED: 45,
     
     // PENALTIES - OPTIMIZED FOR BINARY OPTIONS + NEW ADDITIONS
     INDUCEMENT_TOO_CLOSE: -45,     // NEW: IDM near POI = likely trap
@@ -173,9 +174,9 @@ window.V12Engine = (function(indicators) {
     20: 60,   // Low - some structure visible
     30: 95,   // Below average - partial confluence
     40: 130,  // Average - decent setup
-    50: 200,  // Good - solid setup (INCREASED from 180 - filter weak setups, WR sweet spot 190-209)
-    60: 240,  // Very good - strong confluence (INCREASED from 230 - higher standard)
-    70: 290,  // High - excellent setup (INCREASED from 280 - only best setups)
+    50: 220,  // Good - solid setup (INCREASED to 220 for 70% WR target)
+    60: 260,  // Very good - strong confluence (INCREASED to 260)
+    70: 300,  // High - excellent setup (INCREASED to 300)
     80: 350,  // Very high - perfect storm (INCREASED from 330 - exceptional required)
     90: 400   // Exceptional - maximum confluence (INCREASED from 380 - ultra-rare)
   };
@@ -278,6 +279,28 @@ window.V12Engine = (function(indicators) {
     }
     
     return result;
+  }
+
+  // ============================================
+  // MOMENTUM & VELOCITY DELTA
+  // Measures price acceleration to confirm impulse
+  // ============================================
+
+  function calculateVelocityDelta(candles) {
+    if (!candles || candles.length < 10) return { velocity: 0, delta: 0, aligned: 'NONE' };
+
+    // Recent velocity (last 3 candles)
+    const vNow = (candles[candles.length - 1].c - candles[candles.length - 4].c) / 3;
+    // Previous velocity (candles 4 to 6 ago)
+    const vPrev = (candles[candles.length - 4].c - candles[candles.length - 7].c) / 3;
+
+    const delta = vNow - vPrev;
+
+    let aligned = 'NONE';
+    if (vNow > 0 && delta > 0) aligned = 'BULLISH';
+    if (vNow < 0 && delta < 0) aligned = 'BEARISH';
+
+    return { velocity: vNow, delta: delta, aligned: aligned };
   }
 
   // ============================================
@@ -392,6 +415,9 @@ window.V12Engine = (function(indicators) {
     
     // Get Price Action Patterns
     const priceAction = detectPriceActionPatterns(candles);
+
+    // Get Velocity Delta
+    const vDelta = calculateVelocityDelta(candles);
     
     const lastCandle = candles[candles.length - 1];
     
@@ -658,6 +684,18 @@ window.V12Engine = (function(indicators) {
         sellScore += SCORES.TREND_ALIGNMENT;
         sellReasons.push(`[+${SCORES.TREND_ALIGNMENT}] Trend aligned (${trendContext.combinedTrend})`);
       }
+    }
+
+    // ============================================
+    // VELOCITY DELTA (Momentum Acceleration)
+    // ============================================
+
+    if (vDelta.aligned === 'BULLISH') {
+      buyScore += SCORES.VELOCITY_DELTA_ALIGNED;
+      buyReasons.push(`[+${SCORES.VELOCITY_DELTA_ALIGNED}] Bullish Velocity Delta (acceleration)`);
+    } else if (vDelta.aligned === 'BEARISH') {
+      sellScore += SCORES.VELOCITY_DELTA_ALIGNED;
+      sellReasons.push(`[+${SCORES.VELOCITY_DELTA_ALIGNED}] Bearish Velocity Delta (acceleration)`);
     }
     
     // ============================================
