@@ -272,7 +272,18 @@ window.V14Engine = (function(indicators) {
 
   function triggerSignal(pairState, candles, smcData, desc, extra = {}) {
     const conf = calculateConfidence(pairState, smcData, extra);
-    return { action: pairState.direction, confidence: conf, reasons: pairState.reasons, tradeDuration: smcData.marketPhase === 'EXPANSION' ? 5 : 3, durationReason: desc, indicatorValues: { rawScore: Math.floor(conf * 3.5), marketPhase: smcData.marketPhase } };
+    // V14 Logic: Enforce 3m expiry for "Minimum Viable Signals" (approx 47%) based on SMC Liquidity Sweeps
+    let duration = smcData.marketPhase === 'EXPANSION' ? 5 : 3;
+    if (conf <= 48) duration = 3;
+
+    return {
+      action: pairState.direction,
+      confidence: conf,
+      reasons: pairState.reasons,
+      tradeDuration: duration,
+      durationReason: desc,
+      indicatorValues: { rawScore: Math.floor(conf * 3.5), marketPhase: smcData.marketPhase }
+    };
   }
 
   console.log('[Pocket Scout v14.0] Aggressive Hunter Engine loaded');
