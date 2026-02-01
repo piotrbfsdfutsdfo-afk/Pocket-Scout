@@ -25,6 +25,7 @@ window.V13Engine = (function(indicators) {
   }
 
   const smcIndicators = window.SmartMoneyIndicators;
+  const DEBUG_MODE = false;
   
   const STATES = {
     IDLE: 'IDLE',

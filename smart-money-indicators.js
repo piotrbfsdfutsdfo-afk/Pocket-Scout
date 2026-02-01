@@ -1031,6 +1031,7 @@ window.SmartMoneyIndicators = (function() {
   // Public API
   return {
     analyzeSmartMoney,
+    calculateATR,
     detectPriceActionPatterns,
     calculateVelocityDelta,
     calculateBQI,
