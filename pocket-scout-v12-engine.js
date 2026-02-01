@@ -34,8 +34,8 @@ window.V13Engine = (function(indicators) {
     RETEST: 'RETEST'
   };
 
-  const BQI_THRESHOLD = 65; // Minimum quality for structural breaks
-  const STATE_TIMEOUT_CANDLES = 20; // Reset setup if it takes too long
+  const BQI_THRESHOLD = 55; // Lowered from 65 to "breathe"
+  const STATE_TIMEOUT_CANDLES = 40; // Increased from 20 to allow institutional moves to develop
 
   /**
    * Reset pair state to IDLE
@@ -95,6 +95,15 @@ window.V13Engine = (function(indicators) {
         break;
 
       case STATES.LIQUIDITY_SWEPT:
+        // HYBRID LOGIC SAFETY VALVE:
+        // If Sweep + FVG Retest + PA occur, trigger 60% signal immediately
+        const hybridSignal = checkHybridSetup(candles, pairState, smcData);
+        if (hybridSignal) {
+          signal = hybridSignal;
+          pairState = resetState(pair);
+          break;
+        }
+
         // Transition: Check for Displacement in opposite direction
         const vDelta = smcData.velocityDelta;
         const correctDirection = (pairState.direction === 'BUY' && vDelta.velocity > 0) ||
@@ -103,7 +112,7 @@ window.V13Engine = (function(indicators) {
         // Use ATR-relative candle size for displacement check
         const atr = smcIndicators.calculateATR(candles, 14);
         const candleRange = lastCandle.h - lastCandle.l;
-        const isDisplacement = candleRange > (atr * 1.5);
+        const isDisplacement = candleRange > (atr * 1.2); // Lowered from 1.5x to 1.2x
 
         if (correctDirection && isDisplacement) {
           pairState.status = STATES.DISPLACEMENT;
@@ -155,9 +164,11 @@ window.V13Engine = (function(indicators) {
         }
 
         if (isRetesting) {
-          // Final validation: Market Phase (Avoid Dead Markets)
-          if (smcData.marketPhase === 'CONTRACTION') {
-            if (DEBUG_MODE) console.log(`[PS v13] Sequence complete for ${pair} but rejected due to CONTRACTION phase.`);
+          // Final validation: Market Phase
+          // SMC ADAPTIVE: Do NOT block if LIQUIDITY_SWEPT was confirmed (implied by being in CHOCH state)
+          // Only block if it's exceptionally dead, but standard CONTRACTION is allowed for sequence retests.
+          if (smcData.marketPhase === 'CONTRACTION' && smcData.velocityDelta.delta < 0.00001) {
+            if (DEBUG_MODE) console.log(`[PS v13] Sequence complete for ${pair} but rejected due to extreme CONTRACTION.`);
             pairState = resetState(pair);
             break;
           }
@@ -175,6 +186,46 @@ window.V13Engine = (function(indicators) {
     }
 
     return { signal, updatedState: pairState };
+  }
+
+  /**
+   * Hybrid Logic: Sweep + FVG + PA
+   */
+  function checkHybridSetup(candles, pairState, smcData) {
+    const lastCandle = candles[candles.length - 1];
+    const pa = smcIndicators.detectPriceActionPatterns(candles);
+
+    // Check for FVG proximity (any fresh FVG)
+    const freshBullishFVG = smcData.imbalance.bullishIMB.find(imb => !imb.mitigated);
+    const freshBearishFVG = smcData.imbalance.bearishIMB.find(imb => !imb.mitigated);
+
+    if (pairState.direction === 'BUY' && freshBullishFVG && (pa.pinBar?.type === 'BULLISH_PIN' || pa.engulfing?.type === 'BULLISH_ENGULFING')) {
+      if (lastCandle.l <= freshBullishFVG.top) {
+        return {
+          action: 'BUY',
+          confidence: 60,
+          reasons: ['Hybrid: Sweep + FVG Retest + PA'],
+          tradeDuration: 3,
+          durationReason: 'Hybrid Quick Entry',
+          indicatorValues: { rawScore: 180, marketPhase: smcData.marketPhase, velocity: smcData.velocityDelta.velocity }
+        };
+      }
+    }
+
+    if (pairState.direction === 'SELL' && freshBearishFVG && (pa.pinBar?.type === 'BEARISH_PIN' || pa.engulfing?.type === 'BEARISH_ENGULFING')) {
+      if (lastCandle.h >= freshBearishFVG.bottom) {
+        return {
+          action: 'SELL',
+          confidence: 60,
+          reasons: ['Hybrid: Sweep + FVG Retest + PA'],
+          tradeDuration: 3,
+          durationReason: 'Hybrid Quick Entry',
+          indicatorValues: { rawScore: 180, marketPhase: smcData.marketPhase, velocity: smcData.velocityDelta.velocity }
+        };
+      }
+    }
+
+    return null;
   }
 
   /**

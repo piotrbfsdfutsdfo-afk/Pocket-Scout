@@ -988,9 +988,50 @@ window.SmartMoneyIndicators = (function() {
     return 'RANGING';
   }
 
+  /**
+   * Price Action Patterns
+   * Detects Pin Bars and Engulfing patterns
+   */
+  function detectPriceActionPatterns(candles) {
+    if (candles.length < 3) return { pinBar: null, engulfing: null };
+
+    const lastCandle = candles[candles.length - 1];
+    const prevCandle = candles[candles.length - 2];
+
+    const bodySize = Math.abs(lastCandle.c - lastCandle.o);
+    const totalRange = lastCandle.h - lastCandle.l;
+    const upperWick = lastCandle.h - Math.max(lastCandle.o, lastCandle.c);
+    const lowerWick = Math.min(lastCandle.o, lastCandle.c) - lastCandle.l;
+
+    let pinBar = null;
+    let engulfing = null;
+
+    // Pin Bar: Wick must be at least 66.7% of total range
+    if (upperWick > totalRange * 0.667 && bodySize < totalRange * 0.333) {
+      pinBar = { type: 'BEARISH_PIN', strength: upperWick / totalRange };
+    } else if (lowerWick > totalRange * 0.667 && bodySize < totalRange * 0.333) {
+      pinBar = { type: 'BULLISH_PIN', strength: lowerWick / totalRange };
+    }
+
+    // Engulfing Pattern
+    const prevBodySize = Math.abs(prevCandle.c - prevCandle.o);
+    if (lastCandle.c > lastCandle.o && prevCandle.c < prevCandle.o) {
+      if (lastCandle.c > prevCandle.o && lastCandle.o < prevCandle.c && bodySize > prevBodySize) {
+        engulfing = { type: 'BULLISH_ENGULFING' };
+      }
+    } else if (lastCandle.c < lastCandle.o && prevCandle.c > prevCandle.o) {
+      if (lastCandle.c < prevCandle.o && lastCandle.o > prevCandle.c && bodySize > prevBodySize) {
+        engulfing = { type: 'BEARISH_ENGULFING' };
+      }
+    }
+
+    return { pinBar, engulfing };
+  }
+
   // Public API
   return {
     analyzeSmartMoney,
+    detectPriceActionPatterns,
     calculateVelocityDelta,
     calculateBQI,
     detectMarketPhase,
