@@ -32,9 +32,22 @@ window.V14Engine = (function(indicators) {
     RETEST: 'RETEST'
   };
 
-  const BQI_THRESHOLD = 45; // Lowered from 55 to "Aggressive Hunter"
+  const BQI_THRESHOLD = 45; // Aggressive floor
   const STATE_TIMEOUT_CANDLES = 40;
-  const COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+  const COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes throttle
+
+  // --- Scoring Weights for Confidence Calculation ---
+  const WEIGHTS = {
+    STATE_SWEPT: 20,
+    STATE_DISPLACEMENT: 10,
+    STATE_CHOCH: 10,
+    STATE_RETEST: 10,
+    BQI_FLOOR: 10,       // BQI >= 45
+    TREND_ALIGN: 10,     // M15 alignment
+    PHASE_EXPANSION: 7,  // Phase != CONTRACTION
+    MOMENTUM_BOOST: 13,  // High Velocity strike
+    PA_CONFIRM: 10       // Sniper Rejection or PA pattern
+  };
 
   /**
    * Reset pair state to IDLE
@@ -44,19 +57,38 @@ window.V14Engine = (function(indicators) {
       status: STATES.IDLE,
       direction: null,
       lastUpdateCandle: 0,
-      lastSignalTimestamp: existingTimestamp, // Preserve cooldown tracking
+      lastSignalTimestamp: existingTimestamp, // Preserve cooldown
       setupData: {},
       reasons: []
     };
   }
 
   /**
-   * FastTrack Bypass: Skip waiting for retest if momentum is strong
+   * Granular Confidence Calculator
+   * Minimum Viable Signal = 47% (SWEPT 20 + BQI 10 + TREND 10 + PHASE 7)
    */
-  function fastTrack(smcData, pairState) {
-    const vDelta = smcData.velocityDelta;
-    return (pairState.direction === 'BUY' && vDelta.aligned === 'BULLISH') ||
-           (pairState.direction === 'SELL' && vDelta.aligned === 'BEARISH');
+  function calculateConfidence(pairState, smcData, extraFactors = {}) {
+    let score = 0;
+
+    // 1. State Progress
+    if (pairState.status === STATES.LIQUIDITY_SWEPT) score += WEIGHTS.STATE_SWEPT;
+    if (pairState.status === STATES.DISPLACEMENT) score += (WEIGHTS.STATE_SWEPT + WEIGHTS.STATE_DISPLACEMENT);
+    if (pairState.status === STATES.CHOCH) score += (WEIGHTS.STATE_SWEPT + WEIGHTS.STATE_DISPLACEMENT + WEIGHTS.STATE_CHOCH);
+    if (pairState.status === STATES.RETEST) score += (WEIGHTS.STATE_SWEPT + WEIGHTS.STATE_DISPLACEMENT + WEIGHTS.STATE_CHOCH + WEIGHTS.STATE_RETEST);
+
+    // 2. Breakout Quality
+    const bqi = pairState.setupData.lastBQI || 0;
+    if (bqi >= BQI_THRESHOLD) score += WEIGHTS.BQI_FLOOR;
+
+    // 3. Context
+    if (smcData.marketStructure.m15Trend === pairState.direction) score += WEIGHTS.TREND_ALIGN;
+    if (smcData.marketPhase !== 'CONTRACTION') score += WEIGHTS.PHASE_EXPANSION;
+
+    // 4. Boosts
+    if (extraFactors.momentum) score += WEIGHTS.MOMENTUM_BOOST;
+    if (extraFactors.pa) score += WEIGHTS.PA_CONFIRM;
+
+    return Math.min(100, score);
   }
 
   /**
@@ -65,13 +97,11 @@ window.V14Engine = (function(indicators) {
   function generateSignal(candles, pair, pairState) {
     if (!candles || candles.length < 35) return { signal: null, updatedState: pairState };
 
-    // Initialize state if new pair
-    if (!pairState || !pairState.status) {
-      pairState = resetState(pair);
-    }
+    // Initialize state
+    if (!pairState || !pairState.status) pairState = resetState(pair);
 
     const now = Date.now();
-    // Throttle: 10 minutes cooldown per pair
+    // 10-minute throttle
     if (pairState.lastSignalTimestamp && (now - pairState.lastSignalTimestamp) < COOLDOWN_MS) {
       return { signal: null, updatedState: pairState };
     }
@@ -89,27 +119,19 @@ window.V14Engine = (function(indicators) {
 
     let signal = null;
 
-    // --- TRIPLE THREAT ENGINE ---
-
     // Path 1: Velocity Strike (Pure Momentum)
     const vStrike = checkVelocityStrike(candles, smcData);
-    if (vStrike) {
-      return { signal: vStrike, updatedState: resetState(pair, now) };
-    }
+    if (vStrike) return { signal: vStrike, updatedState: resetState(pair, now) };
 
     // Path 2: Gap & Go (FVG Aggression)
     const gGo = checkGapAndGo(candles, smcData);
-    if (gGo) {
-      return { signal: gGo, updatedState: resetState(pair, now) };
-    }
+    if (gGo) return { signal: gGo, updatedState: resetState(pair, now) };
 
     // Path 3: Sniper Rejection (Local SNR)
     const sniper = checkSniperRejection(candles, smcData);
-    if (sniper) {
-      return { signal: sniper, updatedState: resetState(pair, now) };
-    }
+    if (sniper) return { signal: sniper, updatedState: resetState(pair, now) };
 
-    // --- SMC Prime State Machine ---
+    // State Machine
     switch (pairState.status) {
       case STATES.IDLE:
         const sweeps = smcData.liquidity.sweeps;
@@ -117,274 +139,140 @@ window.V14Engine = (function(indicators) {
           pairState.status = STATES.LIQUIDITY_SWEPT;
           pairState.direction = 'BUY';
           pairState.lastUpdateCandle = currentTickIndex;
-          pairState.reasons = ['Liquidity Sweep (Bullish)'];
+          pairState.reasons = ['Liquidity Sweep'];
         } else if (sweeps.bearishSweeps.length > 0) {
           pairState.status = STATES.LIQUIDITY_SWEPT;
           pairState.direction = 'SELL';
           pairState.lastUpdateCandle = currentTickIndex;
-          pairState.reasons = ['Liquidity Sweep (Bearish)'];
+          pairState.reasons = ['Liquidity Sweep'];
         }
         break;
 
       case STATES.LIQUIDITY_SWEPT:
-        // HYBRID LOGIC SAFETY VALVE:
-        // If Sweep + FVG Retest + PA occur, trigger 60% signal immediately
-        const hybridSignal = checkHybridSetup(candles, pairState, smcData);
-        if (hybridSignal) {
-          return { signal: hybridSignal, updatedState: resetState(pair, now) };
-        }
+        const hybrid = checkHybridSetup(candles, pairState, smcData);
+        if (hybrid) return { signal: hybrid, updatedState: resetState(pair, now) };
 
-        const vDelta = smcData.velocityDelta;
         const atr = smcIndicators.calculateATR(candles, 14);
-        const candleRange = lastCandle.h - lastCandle.l;
-        const isDisplacement = candleRange > (atr.current * 1.2);
-
-        const correctDirection = (pairState.direction === 'BUY' && vDelta.velocity > 0) ||
-                                 (pairState.direction === 'SELL' && vDelta.velocity < 0);
-
-        if (correctDirection && isDisplacement) {
-          pairState.status = STATES.DISPLACEMENT;
-          pairState.lastUpdateCandle = currentTickIndex;
-          pairState.reasons.push('Displacement detected');
+        if ((lastCandle.h - lastCandle.l) > (atr.current * 1.2)) {
+          const v = smcData.velocityDelta.velocity;
+          if ((pairState.direction === 'BUY' && v > 0) || (pairState.direction === 'SELL' && v < 0)) {
+            pairState.status = STATES.DISPLACEMENT;
+            pairState.lastUpdateCandle = currentTickIndex;
+            pairState.reasons.push('Displacement');
+          }
         }
         break;
 
       case STATES.DISPLACEMENT:
-        const structure = smcData.marketStructure;
-        const lastCHoCH = structure.lastCHoCH;
-        if (lastCHoCH && lastCHoCH.bqi >= BQI_THRESHOLD &&
-            ((pairState.direction === 'BUY' && lastCHoCH.type === 'BULLISH_CHoCH') ||
-             (pairState.direction === 'SELL' && lastCHoCH.type === 'BEARISH_CHoCH'))) {
-
+        const lastCHoCH = smcData.marketStructure.lastCHoCH;
+        if (lastCHoCH && lastCHoCH.bqi >= BQI_THRESHOLD && ((pairState.direction === 'BUY' && lastCHoCH.type === 'BULLISH_CHoCH') || (pairState.direction === 'SELL' && lastCHoCH.type === 'BEARISH_CHoCH'))) {
           pairState.status = STATES.CHOCH;
           pairState.lastUpdateCandle = currentTickIndex;
-          pairState.reasons.push(`CHoCH (BQI: ${lastCHoCH.bqi})`);
+          pairState.setupData.lastBQI = lastCHoCH.bqi;
+          pairState.reasons.push('CHoCH Sequence');
           
-          // FastTrack Bypass: Enter immediately if momentum is aligned
-          if (fastTrack(smcData, pairState)) {
-             signal = triggerSignal(pairState, candles, smcData, 'FastTrack Entry');
-             return { signal, updatedState: resetState(pair, now) };
+          // FastTrack Bypass
+          if ((pairState.direction === 'BUY' && smcData.velocityDelta.aligned === 'BULLISH') || (pairState.direction === 'SELL' && smcData.velocityDelta.aligned === 'BEARISH')) {
+             return { signal: triggerSignal(pairState, candles, smcData, 'FastTrack Entry', { momentum: true }), updatedState: resetState(pair, now) };
           }
-
-          pairState.setupData.poi = {
-            orderBlocks: smcData.orderBlocks,
-            imbalance: smcData.imbalance
-          };
+          pairState.setupData.poi = { orderBlocks: smcData.orderBlocks, imbalance: smcData.imbalance };
         }
         break;
 
       case STATES.CHOCH:
         const pois = pairState.setupData.poi;
-        let isRetesting = false;
+        let retest = false;
         if (pairState.direction === 'BUY') {
-          const freshOB = pois.orderBlocks.bullishOB.find(ob => !ob.mitigated);
-          const freshIMB = pois.imbalance.bullishIMB.find(imb => !imb.mitigated);
-          if ((freshOB && lastCandle.l <= freshOB.high) || (freshIMB && lastCandle.l <= freshIMB.top)) isRetesting = true;
+          const ob = pois.orderBlocks.bullishOB.find(z => !z.mitigated);
+          const imb = pois.imbalance.bullishIMB.find(z => !z.mitigated);
+          if ((ob && lastCandle.l <= ob.high) || (imb && lastCandle.l <= imb.top)) retest = true;
         } else {
-          const freshOB = pois.orderBlocks.bearishOB.find(ob => !ob.mitigated);
-          const freshIMB = pois.imbalance.bearishIMB.find(imb => !imb.mitigated);
-          if ((freshOB && lastCandle.h >= freshOB.low) || (freshIMB && lastCandle.h >= freshIMB.bottom)) isRetesting = true;
+          const ob = pois.orderBlocks.bearishOB.find(z => !z.mitigated);
+          const imb = pois.imbalance.bearishIMB.find(z => !z.mitigated);
+          if ((ob && lastCandle.h >= ob.low) || (imb && lastCandle.h >= imb.bottom)) retest = true;
         }
-
-        if (isRetesting) {
+        if (retest) {
           pairState.status = STATES.RETEST;
-          pairState.reasons.push('POI Retest');
-          signal = triggerSignal(pairState, candles, smcData, 'SMC Sequence complete');
-          return { signal, updatedState: resetState(pair, now) };
+          return { signal: triggerSignal(pairState, candles, smcData, 'Sequence Complete'), updatedState: resetState(pair, now) };
         }
         break;
     }
 
-    return { signal, updatedState: pairState };
+    return { signal: null, updatedState: pairState };
   }
 
-  /**
-   * Path 1: Velocity Strike (Momentum)
-   */
   function checkVelocityStrike(candles, smcData) {
     const vNow = smcData.velocityDelta.velocity;
-    const absV = Math.abs(vNow);
-
-    // Average velocity (last 10)
     let totalV = 0;
-    for (let i = 1; i <= 10; i++) {
-        const v = (candles[candles.length - i].c - candles[candles.length - i - 3].c) / 3;
-        totalV += Math.abs(v);
-    }
+    for (let i = 1; i <= 10; i++) totalV += Math.abs((candles[candles.length - i].c - candles[candles.length - i - 3].c) / 3);
     const avgV = totalV / 10;
-
     const lastCandle = candles[candles.length - 1];
-    const bodyRatio = Math.abs(lastCandle.c - lastCandle.o) / (lastCandle.h - lastCandle.l || 0.00001);
+    const body = Math.abs(lastCandle.c - lastCandle.o) / (lastCandle.h - lastCandle.l || 0.00001);
 
-    if (absV > avgV * 1.8 && bodyRatio > 0.7) {
-      // Local Pivot break? (Just a higher high or lower low than last 5)
-      const isPivotBreak = (vNow > 0 && lastCandle.c > Math.max(...candles.slice(-6, -1).map(c => c.h))) ||
-                           (vNow < 0 && lastCandle.c < Math.min(...candles.slice(-6, -1).map(c => c.l)));
-
-      if (isPivotBreak) {
-        return {
-          action: vNow > 0 ? 'BUY' : 'SELL',
-          confidence: 70,
-          reasons: ['Velocity Strike (Momentum)'],
-          tradeDuration: 2,
-          durationReason: 'Momentum Blast',
-          indicatorValues: { rawScore: 250, marketPhase: smcData.marketPhase }
-        };
+    if (Math.abs(vNow) > avgV * 1.8 && body > 0.7) {
+      const isPivot = (vNow > 0 && lastCandle.c > Math.max(...candles.slice(-6, -1).map(c => c.h))) || (vNow < 0 && lastCandle.c < Math.min(...candles.slice(-6, -1).map(c => c.l)));
+      if (isPivot) {
+        const conf = calculateConfidence({ status: STATES.DISPLACEMENT, direction: vNow > 0 ? 'BUY' : 'SELL', setupData: { lastBQI: 50 } }, smcData, { momentum: true, pa: true });
+        return { action: vNow > 0 ? 'BUY' : 'SELL', confidence: conf, reasons: ['Velocity Strike'], tradeDuration: 2, durationReason: 'Momentum', indicatorValues: { marketPhase: smcData.marketPhase } };
       }
     }
     return null;
   }
 
-  /**
-   * Path 2: Gap & Go (FVG Aggression)
-   */
   function checkGapAndGo(candles, smcData) {
-    const m15Trend = smcData.marketStructure.m15Trend;
-    const fvgBull = smcData.imbalance.bullishIMB.filter(imb => !imb.mitigated && imb.gap > 0.00003); // ~3 pips
-    const fvgBear = smcData.imbalance.bearishIMB.filter(imb => !imb.mitigated && imb.gap > 0.00003);
+    const trend = smcData.marketStructure.m15Trend;
+    const last = candles[candles.length - 1], prev = candles[candles.length - 2];
+    const fvgB = smcData.imbalance.bullishIMB.find(i => !i.mitigated && i.gap > 0.00003 && i.time === prev.t);
+    const fvgS = smcData.imbalance.bearishIMB.find(i => !i.mitigated && i.gap > 0.00003 && i.time === prev.t);
 
-    const lastCandle = candles[candles.length - 1];
-    const prevCandle = candles[candles.length - 2];
-
-    // Bullish Gap & Go
-    if (fvgBull.length > 0 && m15Trend === 'BULLISH') {
-       const latestFVG = fvgBull[fvgBull.length - 1];
-       // Did it just form?
-       if (latestFVG.time === prevCandle.t) {
-          // Enter if retrace < 20%
-          const retrace = (prevCandle.h - lastCandle.c) / (prevCandle.h - prevCandle.l || 0.00001);
-          if (retrace < 0.2) {
-            return {
-              action: 'BUY',
-              confidence: 70,
-              reasons: ['Gap & Go (FVG Aggression)'],
-              tradeDuration: 3,
-              durationReason: 'FVG Impulse',
-              indicatorValues: { rawScore: 250, marketPhase: smcData.marketPhase }
-            };
-          }
-       }
+    if (fvgB && trend === 'BULLISH' && (prev.h - last.c) / (prev.h - prev.l || 0.00001) < 0.2) {
+      const conf = calculateConfidence({ status: STATES.DISPLACEMENT, direction: 'BUY', setupData: { lastBQI: 45 } }, smcData, { momentum: true });
+      return { action: 'BUY', confidence: conf, reasons: ['Gap & Go'], tradeDuration: 3, durationReason: 'FVG Impulse', indicatorValues: { marketPhase: smcData.marketPhase } };
     }
-
-    // Bearish Gap & Go
-    if (fvgBear.length > 0 && m15Trend === 'BEARISH') {
-       const latestFVG = fvgBear[fvgBear.length - 1];
-       if (latestFVG.time === prevCandle.t) {
-          const retrace = (lastCandle.c - prevCandle.l) / (prevCandle.h - prevCandle.l || 0.00001);
-          if (retrace < 0.2) {
-            return {
-              action: 'SELL',
-              confidence: 70,
-              reasons: ['Gap & Go (FVG Aggression)'],
-              tradeDuration: 3,
-              durationReason: 'FVG Impulse',
-              indicatorValues: { rawScore: 250, marketPhase: smcData.marketPhase }
-            };
-          }
-       }
+    if (fvgS && trend === 'BEARISH' && (last.c - prev.l) / (prev.h - prev.l || 0.00001) < 0.2) {
+      const conf = calculateConfidence({ status: STATES.DISPLACEMENT, direction: 'SELL', setupData: { lastBQI: 45 } }, smcData, { momentum: true });
+      return { action: 'SELL', confidence: conf, reasons: ['Gap & Go'], tradeDuration: 3, durationReason: 'FVG Impulse', indicatorValues: { marketPhase: smcData.marketPhase } };
     }
     return null;
   }
 
-  /**
-   * Hybrid Logic: Sweep + FVG + PA
-   */
-  function checkHybridSetup(candles, pairState, smcData) {
-    const lastCandle = candles[candles.length - 1];
-    const pa = smcIndicators.detectPriceActionPatterns(candles);
-
-    // Check for FVG proximity (any fresh FVG)
-    const freshBullishFVG = smcData.imbalance.bullishIMB.find(imb => !imb.mitigated);
-    const freshBearishFVG = smcData.imbalance.bearishIMB.find(imb => !imb.mitigated);
-
-    if (pairState.direction === 'BUY' && freshBullishFVG && (pa.pinBar?.type === 'BULLISH_PIN' || pa.engulfing?.type === 'BULLISH_ENGULFING')) {
-      if (lastCandle.l <= freshBullishFVG.top) {
-        return {
-          action: 'BUY',
-          confidence: 60,
-          reasons: ['Hybrid: Sweep + FVG Retest + PA'],
-          tradeDuration: 3,
-          durationReason: 'Hybrid Quick Entry',
-          indicatorValues: { rawScore: 180, marketPhase: smcData.marketPhase, velocity: smcData.velocityDelta.velocity }
-        };
-      }
-    }
-
-    if (pairState.direction === 'SELL' && freshBearishFVG && (pa.pinBar?.type === 'BEARISH_PIN' || pa.engulfing?.type === 'BEARISH_ENGULFING')) {
-      if (lastCandle.h >= freshBearishFVG.bottom) {
-        return {
-          action: 'SELL',
-          confidence: 60,
-          reasons: ['Hybrid: Sweep + FVG Retest + PA'],
-          tradeDuration: 3,
-          durationReason: 'Hybrid Quick Entry',
-          indicatorValues: { rawScore: 180, marketPhase: smcData.marketPhase, velocity: smcData.velocityDelta.velocity }
-        };
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Path 3: Sniper Rejection (Local SNR)
-   */
   function checkSniperRejection(candles, smcData) {
-    const lastCandle = candles[candles.length - 1];
-    const totalRange = lastCandle.h - lastCandle.l;
-    const bodyTop = Math.max(lastCandle.o, lastCandle.c);
-    const bodyBottom = Math.min(lastCandle.o, lastCandle.c);
-    const upperWick = lastCandle.h - bodyTop;
-    const lowerWick = bodyBottom - lastCandle.l;
-
-    const snrLevels = smcIndicators.getSNRLevels(candles);
-    const mitigatedOBs = [...smcData.orderBlocks.bullishOB, ...smcData.orderBlocks.bearishOB].filter(ob => ob.mitigated);
-
-    // Bullish Rejection
-    if (lowerWick / (totalRange || 0.00001) > 0.6) {
-       const atSupport = snrLevels.some(l => Math.abs(lastCandle.l - l.price) < 0.00002) ||
-                         mitigatedOBs.some(ob => Math.abs(lastCandle.l - ob.low) < 0.00002);
-       if (atSupport) {
-         return {
-           action: 'BUY',
-           confidence: 60,
-           reasons: ['Sniper Rejection (Support)'],
-           tradeDuration: 3,
-           durationReason: 'Rejection at SNR',
-           indicatorValues: { rawScore: 180, marketPhase: smcData.marketPhase }
-         };
-       }
+    const last = candles[candles.length - 1], range = last.h - last.l;
+    const snr = smcIndicators.getSNRLevels(candles);
+    const mitigated = [...smcData.orderBlocks.bullishOB, ...smcData.orderBlocks.bearishOB].filter(o => o.mitigated);
+    if ((last.o - last.l) / (range || 0.00001) > 0.6) {
+      if (snr.some(l => Math.abs(last.l - l.price) < 0.00002) || mitigated.some(o => Math.abs(last.l - o.low) < 0.00002)) {
+        const conf = calculateConfidence({ status: STATES.LIQUIDITY_SWEPT, direction: 'BUY', setupData: { lastBQI: 45 } }, smcData, { pa: true });
+        return { action: 'BUY', confidence: conf, reasons: ['Sniper Support'], tradeDuration: 3, durationReason: 'Rejection', indicatorValues: { marketPhase: smcData.marketPhase } };
+      }
     }
-
-    // Bearish Rejection
-    if (upperWick / (totalRange || 0.00001) > 0.6) {
-       const atResistance = snrLevels.some(l => Math.abs(lastCandle.h - l.price) < 0.00002) ||
-                            mitigatedOBs.some(ob => Math.abs(lastCandle.h - ob.high) < 0.00002);
-       if (atResistance) {
-         return {
-           action: 'SELL',
-           confidence: 60,
-           reasons: ['Sniper Rejection (Resistance)'],
-           tradeDuration: 3,
-           durationReason: 'Rejection at SNR',
-           indicatorValues: { rawScore: 180, marketPhase: smcData.marketPhase }
-         };
-       }
+    if ((last.h - last.o) / (range || 0.00001) > 0.6) {
+      if (snr.some(l => Math.abs(last.h - l.price) < 0.00002) || mitigated.some(o => Math.abs(last.h - o.high) < 0.00002)) {
+        const conf = calculateConfidence({ status: STATES.LIQUIDITY_SWEPT, direction: 'SELL', setupData: { lastBQI: 45 } }, smcData, { pa: true });
+        return { action: 'SELL', confidence: conf, reasons: ['Sniper Resistance'], tradeDuration: 3, durationReason: 'Rejection', indicatorValues: { marketPhase: smcData.marketPhase } };
+      }
     }
     return null;
   }
 
-  function triggerSignal(pairState, candles, smcData, desc) {
-    let tradeDuration = 3;
-    if (smcData.marketPhase === 'EXPANSION') tradeDuration = 5;
-    return {
-      action: pairState.direction,
-      confidence: 70,
-      reasons: pairState.reasons,
-      tradeDuration: tradeDuration,
-      durationReason: desc,
-      indicatorValues: { rawScore: 250, marketPhase: smcData.marketPhase, velocity: smcData.velocityDelta.velocity }
-    };
+  function checkHybridSetup(candles, pairState, smcData) {
+    const last = candles[candles.length - 1], pa = smcIndicators.detectPriceActionPatterns(candles);
+    const fvgB = smcData.imbalance.bullishIMB.find(i => !i.mitigated && last.l <= i.top);
+    const fvgS = smcData.imbalance.bearishIMB.find(i => !i.mitigated && last.h >= i.bottom);
+    if (pairState.direction === 'BUY' && fvgB && (pa.pinBar?.type === 'BULLISH_PIN' || pa.engulfing?.type === 'BULLISH_ENGULFING')) {
+      const conf = calculateConfidence(pairState, smcData, { pa: true });
+      return { action: 'BUY', confidence: conf, reasons: ['Hybrid Setup'], tradeDuration: 3, durationReason: 'Safety Valve', indicatorValues: { marketPhase: smcData.marketPhase } };
+    }
+    if (pairState.direction === 'SELL' && fvgS && (pa.pinBar?.type === 'BEARISH_PIN' || pa.engulfing?.type === 'BEARISH_ENGULFING')) {
+      const conf = calculateConfidence(pairState, smcData, { pa: true });
+      return { action: 'SELL', confidence: conf, reasons: ['Hybrid Setup'], tradeDuration: 3, durationReason: 'Safety Valve', indicatorValues: { marketPhase: smcData.marketPhase } };
+    }
+    return null;
+  }
+
+  function triggerSignal(pairState, candles, smcData, desc, extra = {}) {
+    const conf = calculateConfidence(pairState, smcData, extra);
+    return { action: pairState.direction, confidence: conf, reasons: pairState.reasons, tradeDuration: smcData.marketPhase === 'EXPANSION' ? 5 : 3, durationReason: desc, indicatorValues: { rawScore: Math.floor(conf * 3.5), marketPhase: smcData.marketPhase } };
   }
 
   console.log('[Pocket Scout v14.0] Aggressive Hunter Engine loaded');
