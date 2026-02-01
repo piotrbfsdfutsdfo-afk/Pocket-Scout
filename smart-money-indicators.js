@@ -229,24 +229,31 @@ window.SmartMoneyIndicators = (function() {
    * Used for making SWEEP_WICK_RATIO adaptive
    */
   function calculateATR(candles, period = 14) {
-    if (!candles || candles.length < period + 1) return null;
+    if (!candles || candles.length < period + 1) return { current: 0, mean: 0, ratio: 1 };
 
-    const recentCandles = candles.slice(-(period + 1));
+    const atrValues = [];
     let trSum = 0;
 
-    for (let i = 1; i < recentCandles.length; i++) {
-      const current = recentCandles[i];
-      const previous = recentCandles[i - 1];
-      
-      const high_low = current.h - current.l;
-      const high_close = Math.abs(current.h - previous.c);
-      const low_close = Math.abs(current.l - previous.c);
-      
-      const tr = Math.max(high_low, high_close, low_close);
-      trSum += tr;
+    // Calculate initial SMA for ATR
+    for (let i = 1; i <= period; i++) {
+        const h = candles[i].h, l = candles[i].l, pc = candles[i-1].c;
+        trSum += Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+    }
+    let currentAtr = trSum / period;
+    atrValues.push(currentAtr);
+
+    // EMA for remaining
+    for (let i = period + 1; i < candles.length; i++) {
+        const h = candles[i].h, l = candles[i].l, pc = candles[i-1].c;
+        const tr = Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+        currentAtr = (tr * (1 / period)) + (currentAtr * (1 - 1 / period));
+        atrValues.push(currentAtr);
     }
 
-    return trSum / period;
+    const meanAtr = atrValues.reduce((a, b) => a + b, 0) / atrValues.length;
+    const current = atrValues[atrValues.length - 1];
+
+    return { current, mean: meanAtr, ratio: current / (meanAtr || 0.00001) };
   }
 
   /**
@@ -852,12 +859,26 @@ window.SmartMoneyIndicators = (function() {
    * Comprehensive Smart Money Analysis
    * Combines all SMC indicators for complete market picture
    */
+  function calculateTrendContext(candles) {
+    const result = { m15Trend: 'NEUTRAL', h1Trend: 'NEUTRAL', combinedTrend: 'NEUTRAL' };
+    if (!candles || candles.length < 15) return result;
+    const closes = candles.map(c => c.c);
+    const lastPrice = closes[closes.length - 1];
+    const ema5 = closes.slice(-5).reduce((a, b) => a + b, 0) / 5;
+    const ema15 = closes.slice(-15).reduce((a, b) => a + b, 0) / 15;
+    if (lastPrice > ema5 && ema5 > ema15) result.m15Trend = 'BULLISH';
+    else if (lastPrice < ema5 && ema5 < ema15) result.m15Trend = 'BEARISH';
+    result.trend = result.m15Trend; // Legacy support
+    return result;
+  }
+
   function analyzeSmartMoney(candles) {
     if (!candles || candles.length < 20) {
       return null;
     }
 
     const marketStructure = detectMarketStructure(candles);
+    marketStructure.m15Trend = calculateTrendContext(candles).m15Trend;
     const equalLevels = detectEqualLevels(candles);
     const sweeps = detectLiquiditySweeps(candles);
     const orderBlocksRaw = detectOrderBlocks(candles);
@@ -981,9 +1002,9 @@ window.SmartMoneyIndicators = (function() {
     const avg5Range = last5.reduce((sum, c) => sum + (c.h - c.l), 0) / 5;
 
     // Expansion: volatility increasing, candles larger than ATR
-    if (avg5Range > atr * 1.2) return 'EXPANSION';
+    if (avg5Range > atr.current * 1.2) return 'EXPANSION';
     // Contraction: volatility decreasing, candles smaller than ATR
-    if (avg5Range < atr * 0.7) return 'CONTRACTION';
+    if (avg5Range < atr.current * 0.7) return 'CONTRACTION';
 
     return 'RANGING';
   }
@@ -1028,9 +1049,28 @@ window.SmartMoneyIndicators = (function() {
     return { pinBar, engulfing };
   }
 
+  /**
+   * Get Support and Resistance Levels (SNR)
+   */
+  function getSNRLevels(candles) {
+    const { swingHighs, swingLows } = findSwingPoints(candles, 5);
+    const { eqHighs, eqLows } = detectEqualLevels(candles);
+
+    // Combine recent highs and lows as potential SNR
+    const levels = [];
+    if (swingHighs.length > 0) levels.push({ price: swingHighs[swingHighs.length - 1].price, type: 'RESISTANCE' });
+    if (swingLows.length > 0) levels.push({ price: swingLows[swingLows.length - 1].price, type: 'SUPPORT' });
+
+    eqHighs.forEach(h => levels.push({ price: h.price, type: 'RESISTANCE_EQ' }));
+    eqLows.forEach(l => levels.push({ price: l.price, type: 'SUPPORT_EQ' }));
+
+    return levels;
+  }
+
   // Public API
   return {
     analyzeSmartMoney,
+    getSNRLevels,
     calculateATR,
     detectPriceActionPatterns,
     calculateVelocityDelta,

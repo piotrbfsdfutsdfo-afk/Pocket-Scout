@@ -12,7 +12,7 @@
 (function() {
   'use strict';
 
-  const VERSION = '13.0.0';
+  const VERSION = '14.0.0';
   const FEED_KEY = 'PS_AT_FEED';
   const DATASTREAM_FEED_KEY = 'POCKET_DATASTREAM_FEED';
   const HISTORY_LIMIT = 50;
@@ -446,7 +446,7 @@
    */
   function generateSignalCandidateForPair(pair) {
     if (!pairWarmupComplete[pair]) return null;
-    const engine = window.V13Engine || window.V12Engine; // Support both for transition
+    const engine = window.V14Engine || window.V13Engine || window.V12Engine;
     if (!engine) {
         console.error(`[PS v${VERSION}] FATAL: Signal Engine not available.`);
         return null;
@@ -460,8 +460,16 @@
     }
 
     const engineCandles = [...ohlcM1];
-    // Pass and receive updated state for v13 engine
-    let { signal, updatedState } = engine.generateSignal(engineCandles, pair, pairEngineStates[pair]);
+    const engineOutput = engine.generateSignal(engineCandles, pair, pairEngineStates[pair]);
+
+    // Handle both formats: { signal, updatedState } (v13+) and signalObject (v12)
+    let signal = engineOutput;
+    let updatedState = null;
+
+    if (engineOutput && engineOutput.hasOwnProperty('signal')) {
+      signal = engineOutput.signal;
+      updatedState = engineOutput.updatedState;
+    }
 
     // Persist state
     if (updatedState) {
@@ -477,7 +485,7 @@
       pair: pair,
       action: signal.action,
       confidence: signal.confidence,
-      duration: signal.tradeDuration,
+      duration: signal.tradeDuration || signal.duration,
       durationReason: signal.durationReason,
       reasons: signal.reasons,
       timestamp: Date.now(), 
