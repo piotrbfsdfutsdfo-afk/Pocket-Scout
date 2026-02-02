@@ -12,7 +12,7 @@
 (function() {
   'use strict';
 
-  const VERSION = '14.0.0';
+  const VERSION = '15.0.0';
   const FEED_KEY = 'PS_AT_FEED';
   const DATASTREAM_FEED_KEY = 'POCKET_DATASTREAM_FEED';
   const HISTORY_LIMIT = 50;
@@ -68,7 +68,7 @@
   
   // --- Payout Configuration ---
   const MIN_PAYOUT_PERCENT = 80; // Only show signals for pairs with >= 80% payout
-  const MIN_CONFIDENCE_PERCENT = 47; // Minimum confidence for signal eligibility
+  const MIN_CONFIDENCE_PERCENT = 70; // Minimum confidence for signal eligibility (V15 Sniper Tier)
   
   // Map of pair -> current payout percentage
   const pairPayouts = {};
