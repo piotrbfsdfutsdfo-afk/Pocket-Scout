@@ -27,7 +27,7 @@ window.SmartMoneyIndicators = (function() {
     OB_STRENGTH_THRESHOLD: 0.0005, // 5 pips minimum for significant OB
     
     // Imbalance/FVG
-    IMB_MIN_GAP: 0.0003,         // 3 pips minimum gap for FVG
+    IMB_MIN_GAP: 0.00015,        // Treat as Magnet (target), not barrier
     
     // Market Structure
     BOS_CONFIRMATION_CANDLES: 1,  // Candles needed to confirm BOS/CHoCH
