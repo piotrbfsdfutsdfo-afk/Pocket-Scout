@@ -137,28 +137,29 @@ window.V17Engine = (function(indicators) {
       pairState = resetState(pair, pairState.lastSignalTimestamp, pairState.deepSight);
     }
 
-    // --- LIQUIDITY SNIPER V2 LOGIC ---
+    // --- LIQUIDITY SNIPER V2 LOGIC (v17 ROBUST) ---
 
     // Step A: Detect Sweeps of EQH/EQL
-    const sweeps = smcData.liquidity.sweeps;
     const eq = smcData.liquidity.equalLevels;
 
-    // Check if current sweep is of an Equal Level
+    // Explicitly check if current candle pierces any EQ level
     let isEQSweep = false;
     let direction = null;
 
-    if (sweeps.bullishSweeps.length > 0) {
-      const sweep = sweeps.bullishSweeps[0];
-      if (eq.eqLows.some(l => Math.abs(sweep.sweptLevel - l.price) < 0.0001)) {
+    const TOLERANCE = 0.0002; // Match indicator tolerance for robustness
+
+    // Bullish Sweep check: Candle Low pierces an EQL and Close is above EQL
+    const lowestEQL = eq.eqLows.length > 0 ? Math.min(...eq.eqLows.map(l => l.price)) : null;
+    if (lowestEQL && lastCandle.l < (lowestEQL + TOLERANCE) && lastCandle.c > lowestEQL) {
         isEQSweep = true;
         direction = 'BUY';
-      }
-    } else if (sweeps.bearishSweeps.length > 0) {
-      const sweep = sweeps.bearishSweeps[0];
-      if (eq.eqHighs.some(l => Math.abs(sweep.sweptLevel - l.price) < 0.0001)) {
-        isEQSweep = true;
-        direction = 'SELL';
-      }
+    } else {
+        // Bearish Sweep check: Candle High pierces an EQH and Close is below EQH
+        const highestEQH = eq.eqHighs.length > 0 ? Math.max(...eq.eqHighs.map(l => l.price)) : null;
+        if (highestEQH && lastCandle.h > (highestEQH - TOLERANCE) && lastCandle.c < highestEQH) {
+            isEQSweep = true;
+            direction = 'SELL';
+        }
     }
 
     if (isEQSweep && pairState.status === STATES.IDLE) {

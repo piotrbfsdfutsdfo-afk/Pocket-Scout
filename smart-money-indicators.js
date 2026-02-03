@@ -20,8 +20,8 @@ window.SmartMoneyIndicators = (function() {
     EQUAL_LEVEL_TOLERANCE: 0.0002, // 2 pips tolerance for EQH/EQL
     
     // Liquidity
-    LIQUIDITY_LOOKBACK: 20,      // Look back 20 candles for significant levels
-    SWEEP_WICK_RATIO: 0.6,       // Wick must be 60% of total candle range for sweep
+    LIQUIDITY_LOOKBACK: 40,      // Look back 40 candles for significant levels (v17)
+    SWEEP_WICK_RATIO: 0.45,      // More lenient sweep for higher frequency
     
     // Order Blocks
     OB_STRENGTH_THRESHOLD: 0.0005, // 5 pips minimum for significant OB
@@ -181,43 +181,51 @@ window.SmartMoneyIndicators = (function() {
    * These are double tops/bottoms where liquidity pools form
    */
   function detectEqualLevels(candles, lookback = SMC_CONFIG.LIQUIDITY_LOOKBACK) {
+    // Only use candles within lookback
+    const recentCandles = candles.slice(-lookback);
     const { swingHighs, swingLows } = findSwingPoints(candles);
-    const tolerance = SMC_CONFIG.EQUAL_LEVEL_TOLERANCE;
     
+    // Filter swing points to only include those that were formed recently OR are still relevant
+    const recentHighs = swingHighs.filter(s => s.index >= candles.length - lookback);
+    const recentLows = swingLows.filter(s => s.index >= candles.length - lookback);
+
+    const tolerance = SMC_CONFIG.EQUAL_LEVEL_TOLERANCE;
     const eqHighs = [];
     const eqLows = [];
     
-    // Find equal highs
-    for (let i = 1; i < swingHighs.length; i++) {
-      const current = swingHighs[i];
-      const previous = swingHighs[i - 1];
-      const priceDiff = Math.abs(current.price - previous.price);
-      const avgPrice = (current.price + previous.price) / 2;
-      
-      if (priceDiff / avgPrice < tolerance) {
-        eqHighs.push({
-          price: avgPrice,
-          count: 2,
-          time: current.time,
-          type: 'EQH'
-        });
+    // Find clusters of equal highs (compare all pairs in lookback)
+    for (let i = 0; i < recentHighs.length; i++) {
+      for (let j = i + 1; j < recentHighs.length; j++) {
+        const priceDiff = Math.abs(recentHighs[i].price - recentHighs[j].price);
+        const avgPrice = (recentHighs[i].price + recentHighs[j].price) / 2;
+
+        if (priceDiff / avgPrice < tolerance) {
+          eqHighs.push({
+            price: avgPrice,
+            count: 2,
+            time: recentHighs[j].time,
+            type: 'EQH'
+          });
+          break; // Avoid duplicate pairs for the same peak
+        }
       }
     }
     
-    // Find equal lows
-    for (let i = 1; i < swingLows.length; i++) {
-      const current = swingLows[i];
-      const previous = swingLows[i - 1];
-      const priceDiff = Math.abs(current.price - previous.price);
-      const avgPrice = (current.price + previous.price) / 2;
-      
-      if (priceDiff / avgPrice < tolerance) {
-        eqLows.push({
-          price: avgPrice,
-          count: 2,
-          time: current.time,
-          type: 'EQL'
-        });
+    // Find clusters of equal lows
+    for (let i = 0; i < recentLows.length; i++) {
+      for (let j = i + 1; j < recentLows.length; j++) {
+        const priceDiff = Math.abs(recentLows[i].price - recentLows[j].price);
+        const avgPrice = (recentLows[i].price + recentLows[j].price) / 2;
+
+        if (priceDiff / avgPrice < tolerance) {
+          eqLows.push({
+            price: avgPrice,
+            count: 2,
+            time: recentLows[j].time,
+            type: 'EQL'
+          });
+          break;
+        }
       }
     }
     
