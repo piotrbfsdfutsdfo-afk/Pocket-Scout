@@ -17,17 +17,17 @@ window.SmartMoneyIndicators = (function() {
   const SMC_CONFIG = {
     // Swing point detection
     SWING_LOOKBACK: 3,           // Minimum 3 candles for swing detection
-    EQUAL_LEVEL_TOLERANCE: 0.0002, // 2 pips tolerance for EQH/EQL
+    EQUAL_LEVEL_TOLERANCE: 2,    // pips tolerance for EQH/EQL
     
     // Liquidity
     LIQUIDITY_LOOKBACK: 40,      // Look back 40 candles for significant levels (v17)
     SWEEP_WICK_RATIO: 0.45,      // More lenient sweep for higher frequency
     
     // Order Blocks
-    OB_STRENGTH_THRESHOLD: 0.0005, // 5 pips minimum for significant OB
+    OB_STRENGTH_THRESHOLD: 5,    // pips minimum for significant OB
     
     // Imbalance/FVG
-    IMB_MIN_GAP: 0.00015,        // Treat as Magnet (target), not barrier
+    IMB_MIN_GAP: 1.5,            // pips (Treat as Magnet/target)
     
     // Market Structure
     BOS_CONFIRMATION_CANDLES: 1,  // Candles needed to confirm BOS/CHoCH
@@ -49,6 +49,17 @@ window.SmartMoneyIndicators = (function() {
     DISCOUNT_THRESHOLD: 0.25,    // 25% of range = Discount zone
     EQUILIBRIUM: 0.5             // 50% of range = Equilibrium
   };
+
+  /**
+   * Dynamic Pip Size Detection
+   */
+  function getPipSize(pair) {
+    if (!pair) return 0.0001;
+    // JPY pairs use 0.01 as 1 pip
+    if (pair.toUpperCase().includes('JPY')) return 0.01;
+    // Standard forex pairs use 0.0001 as 1 pip
+    return 0.0001;
+  }
 
   /**
    * Identify Swing Highs and Swing Lows
@@ -180,7 +191,7 @@ window.SmartMoneyIndicators = (function() {
    * Detect Equal Highs/Lows (EQH/EQL)
    * These are double tops/bottoms where liquidity pools form
    */
-  function detectEqualLevels(candles, lookback = SMC_CONFIG.LIQUIDITY_LOOKBACK) {
+  function detectEqualLevels(candles, lookback = SMC_CONFIG.LIQUIDITY_LOOKBACK, pip = 0.0001) {
     // Only use candles within lookback
     const recentCandles = candles.slice(-lookback);
     const { swingHighs, swingLows } = findSwingPoints(candles);
@@ -189,7 +200,7 @@ window.SmartMoneyIndicators = (function() {
     const recentHighs = swingHighs.filter(s => s.index >= candles.length - lookback);
     const recentLows = swingLows.filter(s => s.index >= candles.length - lookback);
 
-    const tolerance = SMC_CONFIG.EQUAL_LEVEL_TOLERANCE;
+    const tolerance = SMC_CONFIG.EQUAL_LEVEL_TOLERANCE * pip;
     const eqHighs = [];
     const eqLows = [];
     
@@ -350,7 +361,7 @@ window.SmartMoneyIndicators = (function() {
    * Detect Order Blocks
    * Last opposite-colored candle before strong impulsive move
    */
-  function detectOrderBlocks(candles, lookback = 10) {
+  function detectOrderBlocks(candles, lookback = 10, pip = 0.0001) {
     if (candles.length < lookback) return { bullishOB: [], bearishOB: [] };
     
     const bullishOB = [];
@@ -398,13 +409,15 @@ window.SmartMoneyIndicators = (function() {
    * Detect Imbalance/Fair Value Gaps (FVG)
    * Three-candle pattern with gap between first and third candle
    */
-  function detectImbalance(candles, lookback = 10) {
+  function detectImbalance(candles, lookback = 10, pip = 0.0001) {
     if (candles.length < 3) return { bullishIMB: [], bearishIMB: [] };
     
     const bullishIMB = [];
     const bearishIMB = [];
     const recentCandles = candles.slice(-Math.min(lookback, candles.length));
     
+    const minGap = SMC_CONFIG.IMB_MIN_GAP * pip;
+
     for (let i = 0; i < recentCandles.length - 2; i++) {
       const first = recentCandles[i];
       const second = recentCandles[i + 1];
@@ -412,7 +425,7 @@ window.SmartMoneyIndicators = (function() {
       
       // Bullish Imbalance: Gap between first high and third low (upward move)
       const bullishGap = third.l - first.h;
-      if (bullishGap > 0 && bullishGap > SMC_CONFIG.IMB_MIN_GAP) {
+      if (bullishGap > 0 && bullishGap > minGap) {
         bullishIMB.push({
           top: third.l,
           bottom: first.h,
@@ -424,7 +437,7 @@ window.SmartMoneyIndicators = (function() {
       
       // Bearish Imbalance: Gap between first low and third high (downward move)
       const bearishGap = first.l - third.h;
-      if (bearishGap > 0 && bearishGap > SMC_CONFIG.IMB_MIN_GAP) {
+      if (bearishGap > 0 && bearishGap > minGap) {
         bearishIMB.push({
           top: first.l,
           bottom: third.h,
@@ -867,7 +880,7 @@ window.SmartMoneyIndicators = (function() {
    * Comprehensive Smart Money Analysis
    * Combines all SMC indicators for complete market picture
    */
-  function calculateTrendContext(candles) {
+  function calculateTrendContext(candles, pair) {
     const result = { m15Trend: 'NEUTRAL', h1Trend: 'NEUTRAL', combinedTrend: 'NEUTRAL' };
     if (!candles || candles.length < 15) return result;
     const closes = candles.map(c => c.c);
@@ -880,17 +893,19 @@ window.SmartMoneyIndicators = (function() {
     return result;
   }
 
-  function analyzeSmartMoney(candles) {
+  function analyzeSmartMoney(candles, pair) {
     if (!candles || candles.length < 20) {
       return null;
     }
 
+    const pip = getPipSize(pair);
+
     const marketStructure = detectMarketStructure(candles);
-    marketStructure.m15Trend = calculateTrendContext(candles).m15Trend;
-    const equalLevels = detectEqualLevels(candles);
+    marketStructure.m15Trend = calculateTrendContext(candles, pair).m15Trend;
+    const equalLevels = detectEqualLevels(candles, SMC_CONFIG.LIQUIDITY_LOOKBACK, pip);
     const sweeps = detectLiquiditySweeps(candles);
-    const orderBlocksRaw = detectOrderBlocks(candles);
-    const imbalanceRaw = detectImbalance(candles);
+    const orderBlocksRaw = detectOrderBlocks(candles, 10, pip);
+    const imbalanceRaw = detectImbalance(candles, 10, pip);
 
     // Mitigation tracking: filter out zones that have already been hit
     const lastCandle = candles[candles.length - 1];
@@ -1078,6 +1093,7 @@ window.SmartMoneyIndicators = (function() {
   // Public API
   return {
     analyzeSmartMoney,
+    getPipSize,
     getSNRLevels,
     calculateATR,
     detectPriceActionPatterns,

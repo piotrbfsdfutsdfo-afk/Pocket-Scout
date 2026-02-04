@@ -12,7 +12,7 @@
 (function() {
   'use strict';
 
-  const VERSION = '18.0.0';
+  const VERSION = '18.5.0';
   const FEED_KEY = 'PS_AT_FEED';
   const DATASTREAM_FEED_KEY = 'POCKET_DATASTREAM_FEED';
   const HISTORY_LIMIT = 50;

@@ -165,7 +165,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const hcWR = hcTotal > 0 ? hcWinRate.toFixed(1) : '--';
                 const hcWins = metrics.highConfWins || 0;
                 const hcLosses = metrics.highConfLosses || 0;
-                highConfStatsEl.innerHTML = `≥47% Conf: <strong>${hcTotal}</strong> signals (${hcWins}W/${hcLosses}L) | WR: <strong>${hcWR}%</strong>`;
+                highConfStatsEl.innerHTML = `≥70% Conf: <strong>${hcTotal}</strong> signals (${hcWins}W/${hcLosses}L) | WR: <strong>${hcWR}%</strong>`;
                 highConfStatsEl.style.color = hcTotal > 0 && hcWinRate >= 55 ? '#4ade80' : (hcTotal > 0 ? '#facc15' : '#64748b');
 
                 // Set dropdowns to current config

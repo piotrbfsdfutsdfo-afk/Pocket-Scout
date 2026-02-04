@@ -1,10 +1,11 @@
 /**
- * Pocket Scout v18.0.0 - Master of Traps Engine
- * "Liquidity Sniper v2 with Deep Sight Learning & Institutional Filters."
+ * Pocket Scout v18.5.0 - Master Oracle Engine
+ * "Liquidity Sniper v2 with Adaptive Pip Precision & Relaxed Filters."
  * 
  * PHILOSOPHY:
  * - Focus on EQH/EQL Liquidity Sweeps
  * - Institutional Filters: Velocity Delta, M15 Trend, Zonal (P/D)
+ * - Adaptive Pip-aware Sweep Detection (Tolerates JPY precision)
  * - Deep Sight v2 Shadow Tracking (History: 10)
  */
 
@@ -127,7 +128,7 @@ window.V18Engine = (function(indicators) {
       return { signal: null, updatedState: pairState };
     }
 
-    const smcData = smcIndicators.analyzeSmartMoney(candles);
+    const smcData = smcIndicators.analyzeSmartMoney(candles, pair);
     if (!smcData) return { signal: null, updatedState: pairState };
 
     const currentTickIndex = candles.length;
@@ -137,7 +138,8 @@ window.V18Engine = (function(indicators) {
       pairState = resetState(pair, pairState.lastSignalTimestamp, pairState.deepSight);
     }
 
-    // --- LIQUIDITY SNIPER V2 LOGIC (v17 ROBUST) ---
+    // --- LIQUIDITY SNIPER V2 LOGIC (v18.5 ADAPTIVE) ---
+    const pip = smcIndicators.getPipSize(pair);
 
     // Step A: Detect Sweeps of EQH/EQL
     const eq = smcData.liquidity.equalLevels;
@@ -146,7 +148,7 @@ window.V18Engine = (function(indicators) {
     let isEQSweep = false;
     let direction = null;
 
-    const TOLERANCE = 0.0002; // Match indicator tolerance for robustness
+    const TOLERANCE = 2 * pip; // Adaptive tolerance (2 pips)
 
     // Bullish Sweep check: Candle Low pierces an EQL and Close is above EQL
     const lowestEQL = eq.eqLows.length > 0 ? Math.min(...eq.eqLows.map(l => l.price)) : null;
@@ -196,16 +198,16 @@ window.V18Engine = (function(indicators) {
                          (pairState.direction === 'SELL' && vDelta.aligned === 'BEARISH');
           if (!vMatch) return { signal: null, updatedState: pairState };
 
-          // 2. M15 Trend Confluence
+          // 2. M15 Trend Confluence (Relaxed: allow Neutral/Ranging)
           const trend = smcData.marketStructure.m15Trend;
-          const trendMatch = (pairState.direction === 'BUY' && trend === 'BULLISH') ||
-                             (pairState.direction === 'SELL' && trend === 'BEARISH');
+          const trendMatch = (pairState.direction === 'BUY' && (trend === 'BULLISH' || trend === 'NEUTRAL')) ||
+                             (pairState.direction === 'SELL' && (trend === 'BEARISH' || trend === 'NEUTRAL'));
           if (!trendMatch) return { signal: null, updatedState: pairState };
 
-          // 3. Zonal Filter (Premium/Discount)
+          // 3. Zonal Filter (Relaxed: allow Equilibrium/Range)
           const zone = smcData.premiumDiscount?.currentZone;
-          const zoneMatch = (pairState.direction === 'BUY' && zone === 'DISCOUNT') ||
-                            (pairState.direction === 'SELL' && zone === 'PREMIUM');
+          const zoneMatch = (pairState.direction === 'BUY' && (zone === 'DISCOUNT' || zone === 'EQUILIBRIUM')) ||
+                            (pairState.direction === 'SELL' && (zone === 'PREMIUM' || zone === 'EQUILIBRIUM'));
           if (!zoneMatch) return { signal: null, updatedState: pairState };
         }
 
@@ -237,7 +239,7 @@ window.V18Engine = (function(indicators) {
     };
   }
 
-  console.log('[Pocket Scout v18.0] Master of Traps Engine loaded');
+  console.log('[Pocket Scout v18.5] Master Oracle Engine loaded');
   return { generateSignal };
 
 })(window.TechnicalIndicators);
