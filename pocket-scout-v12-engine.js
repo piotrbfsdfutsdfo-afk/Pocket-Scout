@@ -1,23 +1,23 @@
 /**
- * Pocket Scout v18.5.0 - Master Oracle Engine
- * "Liquidity Sniper v2 with Adaptive Pip Precision & Relaxed Filters."
+ * Pocket Scout v19.0.0 - Omniscient Oracle Engine
+ * "Liquidity Sniper v2 with Real-time Deep Sight Learning."
  * 
  * PHILOSOPHY:
- * - Focus on EQH/EQL Liquidity Sweeps
- * - Institutional Filters: Velocity Delta, M15 Trend, Zonal (P/D)
- * - Adaptive Pip-aware Sweep Detection (Tolerates JPY precision)
- * - Deep Sight v2 Shadow Tracking (History: 10)
+ * - Real-time Shadow Tracking (resolves every price tick)
+ * - Continuous Learning: Sweeps recorded even during trade cooldown
+ * - Omniscient Logic: HOT PAIRS get 90s cooldown and bypass all filters
  */
 
-window.V18Engine = (function(indicators) {
+window.V19Engine = (function(indicators) {
   'use strict';
 
   if (!indicators) {
     return { 
       generateSignal: () => { 
-        console.error("[PS v17 Engine] FATAL: TechnicalIndicators dependency not found.");
+        console.error("[PS v19 Engine] FATAL: TechnicalIndicators dependency not found.");
         return null;
-      } 
+      },
+      syncOracle: (p, s) => s
     };
   }
 
@@ -88,8 +88,11 @@ window.V18Engine = (function(indicators) {
         const isWin = (trade.direction === 'BUY' && currentPrice > trade.startPrice) ||
                       (trade.direction === 'SELL' && currentPrice < trade.startPrice);
 
-        ds.virtualHistory.push(isWin ? 'WIN' : 'LOSS');
+        const result = isWin ? 'WIN' : 'LOSS';
+        ds.virtualHistory.push(result);
         if (ds.virtualHistory.length > 10) ds.virtualHistory.shift();
+
+        if (DEBUG_MODE) console.log(`[PS v19 Deep Sight] ${pairState.direction} Shadow trade resolved: ${result} (Price: ${currentPrice} vs Entry: ${trade.startPrice})`);
       } else {
         unresolved.push(trade);
       }
@@ -107,7 +110,16 @@ window.V18Engine = (function(indicators) {
 
 
   /**
-   * Main Engine Entry Point (v17 Market Oracle)
+   * syncOracle (v19): Resolve shadow trades on every tick
+   */
+  function syncOracle(pair, pairState, currentPrice) {
+    if (!pairState || !pairState.deepSight) return pairState;
+    updateDeepSight(pairState, currentPrice);
+    return pairState;
+  }
+
+  /**
+   * Main Engine Entry Point (v19 Omniscient Oracle)
    */
   function generateSignal(candles, pair, pairState) {
     if (!candles || candles.length < 35) return { signal: null, updatedState: pairState };
@@ -120,43 +132,27 @@ window.V18Engine = (function(indicators) {
     const lastCandle = candles[candles.length - 1];
     const now = Date.now();
 
-    // 1. Deep Sight Shadow Tracking Update
+    // 1. Resolve Shadow Trades (Real-time update)
     updateDeepSight(pairState, lastCandle.c);
-
-    // 2. Cooldown check
-    if (pairState.lastSignalTimestamp && (now - pairState.lastSignalTimestamp) < COOLDOWN_MS) {
-      return { signal: null, updatedState: pairState };
-    }
 
     const smcData = smcIndicators.analyzeSmartMoney(candles, pair);
     if (!smcData) return { signal: null, updatedState: pairState };
 
     const currentTickIndex = candles.length;
 
-    // Timeout check (Reset if IDLE sequence hangs)
-    if (pairState.status !== STATES.IDLE && (currentTickIndex - pairState.lastUpdateCandle) > STATE_TIMEOUT_CANDLES) {
-      pairState = resetState(pair, pairState.lastSignalTimestamp, pairState.deepSight);
-    }
-
-    // --- LIQUIDITY SNIPER V2 LOGIC (v18.5 ADAPTIVE) ---
+    // --- LIQUIDITY SNIPER V2 LOGIC (v19 Continuous Learning) ---
     const pip = smcIndicators.getPipSize(pair);
-
-    // Step A: Detect Sweeps of EQH/EQL
     const eq = smcData.liquidity.equalLevels;
 
-    // Explicitly check if current candle pierces any EQ level
     let isEQSweep = false;
     let direction = null;
+    const TOLERANCE = 2 * pip;
 
-    const TOLERANCE = 2 * pip; // Adaptive tolerance (2 pips)
-
-    // Bullish Sweep check: Candle Low pierces an EQL and Close is above EQL
     const lowestEQL = eq.eqLows.length > 0 ? Math.min(...eq.eqLows.map(l => l.price)) : null;
     if (lowestEQL && lastCandle.l < (lowestEQL + TOLERANCE) && lastCandle.c > lowestEQL) {
         isEQSweep = true;
         direction = 'BUY';
     } else {
-        // Bearish Sweep check: Candle High pierces an EQH and Close is below EQH
         const highestEQH = eq.eqHighs.length > 0 ? Math.max(...eq.eqHighs.map(l => l.price)) : null;
         if (highestEQH && lastCandle.h > (highestEQH - TOLERANCE) && lastCandle.c < highestEQH) {
             isEQSweep = true;
@@ -164,19 +160,36 @@ window.V18Engine = (function(indicators) {
         }
     }
 
+    // 2. Record Shadow Trade (Even if in cooldown!)
     if (isEQSweep && pairState.status === STATES.IDLE) {
       pairState.status = STATES.LIQUIDITY_SWEPT;
       pairState.direction = direction;
       pairState.lastUpdateCandle = currentTickIndex;
       pairState.reasons = [`EQ ${direction === 'BUY' ? 'Low' : 'High'} Sweep`];
 
-      // Deep Sight: Log Shadow Trade
       pairState.deepSight.shadowTrades.push({
         startPrice: lastCandle.c,
         direction: direction,
         timestamp: now,
-        expiry: now + (3 * 60 * 1000) // 3m shadow duration
+        expiry: now + (3 * 60 * 1000)
       });
+
+      if (DEBUG_MODE) console.log(`[PS v19 Deep Sight] ${pair} Shadow Trade Started: ${direction} @ ${lastCandle.c}`);
+    }
+
+    // 3. Oracle Check (Hot Pair status)
+    const ds = pairState.deepSight;
+    const isHot = ds.winRate >= 80 && ds.virtualHistory.length >= 3;
+
+    // 4. Cooldown check (Dynamic for Hot Pairs)
+    const activeCooldown = isHot ? 90 * 1000 : COOLDOWN_MS;
+    if (pairState.lastSignalTimestamp && (now - pairState.lastSignalTimestamp) < activeCooldown) {
+      return { signal: null, updatedState: pairState };
+    }
+
+    // 5. Timeout check (Reset if sequence hangs)
+    if (pairState.status !== STATES.IDLE && (currentTickIndex - pairState.lastUpdateCandle) > STATE_TIMEOUT_CANDLES) {
+      pairState = resetState(pair, pairState.lastSignalTimestamp, pairState.deepSight);
     }
 
     // Step B: Wait for Rejection Confirmation & Institutional Filters
@@ -186,25 +199,22 @@ window.V18Engine = (function(indicators) {
                           (pairState.direction === 'SELL' && (pa.pinBar?.type === 'BEARISH_PIN' || pa.engulfing?.type === 'BEARISH_ENGULFING'));
 
       if (isRejection) {
-        // --- v18 INSTITUTIONAL FILTERS ---
-        const ds = pairState.deepSight;
-        const isHot = ds.winRate >= 80 && ds.virtualHistory.length >= 5;
-
+        // --- v19 INSTITUTIONAL FILTERS ---
         // Bypassed if HOT PAIR
         if (!isHot) {
-          // 1. Velocity Delta Confirmation (Acceleration in direction of reversal)
+          // 1. Velocity Delta Confirmation
           const vDelta = smcData.velocityDelta;
           const vMatch = (pairState.direction === 'BUY' && vDelta.aligned === 'BULLISH') ||
                          (pairState.direction === 'SELL' && vDelta.aligned === 'BEARISH');
           if (!vMatch) return { signal: null, updatedState: pairState };
 
-          // 2. M15 Trend Confluence (Relaxed: allow Neutral/Ranging)
+          // 2. M15 Trend Confluence
           const trend = smcData.marketStructure.m15Trend;
           const trendMatch = (pairState.direction === 'BUY' && (trend === 'BULLISH' || trend === 'NEUTRAL')) ||
                              (pairState.direction === 'SELL' && (trend === 'BEARISH' || trend === 'NEUTRAL'));
           if (!trendMatch) return { signal: null, updatedState: pairState };
 
-          // 3. Zonal Filter (Relaxed: allow Equilibrium/Range)
+          // 3. Zonal Filter
           const zone = smcData.premiumDiscount?.currentZone;
           const zoneMatch = (pairState.direction === 'BUY' && (zone === 'DISCOUNT' || zone === 'EQUILIBRIUM')) ||
                             (pairState.direction === 'SELL' && (zone === 'PREMIUM' || zone === 'EQUILIBRIUM'));
@@ -223,23 +233,22 @@ window.V18Engine = (function(indicators) {
 
   function triggerSignal(pairState, candles, smcData, pair) {
     const ds = pairState.deepSight;
-    const isHot = ds.winRate >= 80 && ds.virtualHistory.length >= 5;
+    const isHot = ds.winRate >= 80 && ds.virtualHistory.length >= 3;
     const conf = isHot ? 100 : 75;
 
-    // Log in v18 format
-    console.log(`[PS v18] ${pair} | Pattern: SWEEP | Oracle Score: ${ds.winRate}% | FINAL CONF: ${conf}% ${isHot ? '🔥' : ''}`);
+    console.log(`[PS v19] ${pair} | Pattern: SWEEP | Oracle Score: ${ds.winRate}% | FINAL CONF: ${conf}% ${isHot ? '🔥' : ''}`);
 
     return {
       action: pairState.direction,
       confidence: conf,
       reasons: pairState.reasons,
-      tradeDuration: 3, // Standard M1 precision for v17
+      tradeDuration: 3,
       durationReason: isHot ? 'HOT PAIR Oracle Override' : 'Standard Oracle Sniper',
       indicatorValues: { oracleScore: ds.winRate, isHotPair: isHot }
     };
   }
 
-  console.log('[Pocket Scout v18.5] Master Oracle Engine loaded');
-  return { generateSignal };
+  console.log('[Pocket Scout v19.0] Omniscient Oracle Engine loaded');
+  return { generateSignal, syncOracle };
 
 })(window.TechnicalIndicators);

@@ -99,10 +99,11 @@ document.addEventListener('DOMContentLoaded', function() {
             // Shorten pair name for display
             const displayName = pair.replace('_OTC', '');
             const cardClass = cardClasses.join(' ');
+            const hotIcon = status.isHot ? ' 🔥' : '';
 
             html += `
                 <div class="pair-card ${cardClass}">
-                    <div class="pair-name">${displayName} <span class="${payoutClass}">${payoutDisplay}</span></div>
+                    <div class="pair-name">${displayName}${hotIcon} <span class="${payoutClass}">${payoutDisplay}</span></div>
                     <div class="pair-price">${price}</div>
                     <div class="pair-status ${statusClass}">${statusText}</div>
                 </div>

@@ -12,7 +12,7 @@
 (function() {
   'use strict';
 
-  const VERSION = '18.5.0';
+  const VERSION = '19.0.0';
   const FEED_KEY = 'PS_AT_FEED';
   const DATASTREAM_FEED_KEY = 'POCKET_DATASTREAM_FEED';
   const HISTORY_LIMIT = 50;
@@ -446,7 +446,7 @@
    */
   function generateSignalCandidateForPair(pair) {
     if (!pairWarmupComplete[pair]) return null;
-    const engine = window.V18Engine || window.V17Engine || window.V15Engine || window.V14Engine || window.V13Engine || window.V12Engine;
+    const engine = window.V19Engine || window.V18Engine || window.V17Engine || window.V15Engine || window.V14Engine || window.V13Engine || window.V12Engine;
     if (!engine) {
         console.error(`[PS v${VERSION}] FATAL: Signal Engine not available.`);
         return null;
@@ -676,7 +676,8 @@
         frozen: isFrozen,
         timeSinceUpdate: timeSinceUpdate,
         payout: payout,
-        payoutEligible: payout >= MIN_PAYOUT_PERCENT
+        payoutEligible: payout >= MIN_PAYOUT_PERCENT,
+        isHot: !!(pairEngineStates[pair]?.deepSight?.winRate >= 80 && pairEngineStates[pair]?.deepSight?.virtualHistory?.length >= 3)
       };
     }
     
@@ -790,6 +791,12 @@
           
           if (shouldUpdate) {
             updateCandlesForPair(pair, price, now);
+          }
+
+          // Sync Oracle (Deep Sight) on every tick for real-time intelligence (v19)
+          const engine = window.V19Engine || window.V18Engine;
+          if (engine && engine.syncOracle && pairEngineStates[pair]) {
+            pairEngineStates[pair] = engine.syncOracle(pair, pairEngineStates[pair], price);
           }
         }
       }
