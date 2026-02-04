@@ -1,14 +1,14 @@
 /**
- * Pocket Scout v17.0.0 - Market Oracle Engine
- * "Solution 3: Liquidity Sniper v2 with Deep Sight Learning."
+ * Pocket Scout v18.0.0 - Master of Traps Engine
+ * "Liquidity Sniper v2 with Deep Sight Learning & Institutional Filters."
  * 
  * PHILOSOPHY:
- * - Focus exclusively on EQH/EQL Liquidity Sweeps
- * - Real-time Shadow Tracking (Deep Sight)
- * - 3-minute cooldown for Hot Pair cycles
+ * - Focus on EQH/EQL Liquidity Sweeps
+ * - Institutional Filters: Velocity Delta, M15 Trend, Zonal (P/D)
+ * - Deep Sight v2 Shadow Tracking (History: 10)
  */
 
-window.V17Engine = (function(indicators) {
+window.V18Engine = (function(indicators) {
   'use strict';
 
   if (!indicators) {
@@ -64,7 +64,7 @@ window.V17Engine = (function(indicators) {
       lastSignalTimestamp: existingTimestamp, // Preserve cooldown
       setupData: {},
       reasons: [],
-      // Deep Sight Tracking (v17)
+      // Deep Sight Tracking (v18 - History 10)
       deepSight: existingDeepSight || {
         shadowTrades: [], // { startPrice, direction, timestamp, expiry }
         virtualHistory: [], // ['WIN', 'LOSS', ...]
@@ -88,7 +88,7 @@ window.V17Engine = (function(indicators) {
                       (trade.direction === 'SELL' && currentPrice < trade.startPrice);
 
         ds.virtualHistory.push(isWin ? 'WIN' : 'LOSS');
-        if (ds.virtualHistory.length > 5) ds.virtualHistory.shift();
+        if (ds.virtualHistory.length > 10) ds.virtualHistory.shift();
       } else {
         unresolved.push(trade);
       }
@@ -177,13 +177,38 @@ window.V17Engine = (function(indicators) {
       });
     }
 
-    // Step B: Wait for Rejection Confirmation
+    // Step B: Wait for Rejection Confirmation & Institutional Filters
     if (pairState.status === STATES.LIQUIDITY_SWEPT) {
       const pa = smcIndicators.detectPriceActionPatterns(candles);
       const isRejection = (pairState.direction === 'BUY' && (pa.pinBar?.type === 'BULLISH_PIN' || pa.engulfing?.type === 'BULLISH_ENGULFING')) ||
                           (pairState.direction === 'SELL' && (pa.pinBar?.type === 'BEARISH_PIN' || pa.engulfing?.type === 'BEARISH_ENGULFING'));
 
       if (isRejection) {
+        // --- v18 INSTITUTIONAL FILTERS ---
+        const ds = pairState.deepSight;
+        const isHot = ds.winRate >= 80 && ds.virtualHistory.length >= 5;
+
+        // Bypassed if HOT PAIR
+        if (!isHot) {
+          // 1. Velocity Delta Confirmation (Acceleration in direction of reversal)
+          const vDelta = smcData.velocityDelta;
+          const vMatch = (pairState.direction === 'BUY' && vDelta.aligned === 'BULLISH') ||
+                         (pairState.direction === 'SELL' && vDelta.aligned === 'BEARISH');
+          if (!vMatch) return { signal: null, updatedState: pairState };
+
+          // 2. M15 Trend Confluence
+          const trend = smcData.marketStructure.m15Trend;
+          const trendMatch = (pairState.direction === 'BUY' && trend === 'BULLISH') ||
+                             (pairState.direction === 'SELL' && trend === 'BEARISH');
+          if (!trendMatch) return { signal: null, updatedState: pairState };
+
+          // 3. Zonal Filter (Premium/Discount)
+          const zone = smcData.premiumDiscount?.currentZone;
+          const zoneMatch = (pairState.direction === 'BUY' && zone === 'DISCOUNT') ||
+                            (pairState.direction === 'SELL' && zone === 'PREMIUM');
+          if (!zoneMatch) return { signal: null, updatedState: pairState };
+        }
+
         pairState.reasons.push('PA Rejection');
         const signal = triggerSignal(pairState, candles, smcData, pair);
         return { signal, updatedState: resetState(pair, now, pairState.deepSight) };
@@ -196,11 +221,11 @@ window.V17Engine = (function(indicators) {
 
   function triggerSignal(pairState, candles, smcData, pair) {
     const ds = pairState.deepSight;
-    const isHot = ds.winRate >= 80 && ds.virtualHistory.length >= 3;
+    const isHot = ds.winRate >= 80 && ds.virtualHistory.length >= 5;
     const conf = isHot ? 100 : 75;
 
-    // Log in v17 format
-    console.log(`[PS v17] ${pair} | Pattern: SWEEP | Oracle Score: ${ds.winRate}% | FINAL CONF: ${conf}% ${isHot ? '🔥' : ''}`);
+    // Log in v18 format
+    console.log(`[PS v18] ${pair} | Pattern: SWEEP | Oracle Score: ${ds.winRate}% | FINAL CONF: ${conf}% ${isHot ? '🔥' : ''}`);
 
     return {
       action: pairState.direction,
@@ -212,7 +237,7 @@ window.V17Engine = (function(indicators) {
     };
   }
 
-  console.log('[Pocket Scout v17.0] Market Oracle Engine loaded');
+  console.log('[Pocket Scout v18.0] Master of Traps Engine loaded');
   return { generateSignal };
 
 })(window.TechnicalIndicators);
