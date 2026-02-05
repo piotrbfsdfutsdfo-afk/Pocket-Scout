@@ -6,8 +6,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const pairsInfoEl = document.getElementById('pairsInfo');
     const pairsGridEl = document.getElementById('pairsGrid');
     const highConfStatsEl = document.getElementById('highConfStats');
+    const countdownDisplayEl = document.getElementById('countdownDisplay');
 
-    const signalIntervalSelect = document.getElementById('signalInterval');
     const warmupCandlesSelect = document.getElementById('warmupCandles');
     const resetHistoryBtn = document.getElementById('resetHistory');
     const exportLogsBtn = document.getElementById('exportLogs');
@@ -114,7 +114,30 @@ document.addEventListener('DOMContentLoaded', function() {
         pairsGridEl.innerHTML = html;
     }
 
+    function updateCountdown() {
+        const now = new Date();
+        const min = now.getMinutes();
+        const sec = now.getSeconds();
+
+        const boundaryMin = min + (5 - (min % 5));
+        const totalSecondsRemaining = (boundaryMin - min) * 60 - sec;
+
+        const m = Math.floor(totalSecondsRemaining / 60);
+        const s = totalSecondsRemaining % 60;
+
+        if (countdownDisplayEl) {
+            countdownDisplayEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+            // Pulse effect when near signal
+            if (totalSecondsRemaining <= 10) {
+                countdownDisplayEl.style.color = '#f87171';
+            } else {
+                countdownDisplayEl.style.color = '#60a5fa';
+            }
+        }
+    }
+
     function updatePopup() {
+        updateCountdown();
         queryTabs(tabId => {
             sendMessageToContent(tabId, { type: 'GET_METRICS' }, (response) => {
                 if (!response) return;
@@ -171,17 +194,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 highConfStatsEl.style.color = hcTotal > 0 && hcWinRate >= 55 ? '#4ade80' : (hcTotal > 0 ? '#facc15' : '#64748b');
 
                 // Set dropdowns to current config
-                signalIntervalSelect.value = metrics.currentInterval;
                 warmupCandlesSelect.value = metrics.currentWarmup;
             });
         });
     }
 
     // --- Event Listeners ---
-
-    signalIntervalSelect.addEventListener('change', function() {
-        queryTabs(tabId => sendMessageToContent(tabId, { type: 'SET_INTERVAL', interval: this.value }));
-    });
 
     warmupCandlesSelect.addEventListener('change', function() {
         queryTabs(tabId => sendMessageToContent(tabId, { type: 'SET_WARMUP', warmup: this.value }));
@@ -215,6 +233,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initial update
     updatePopup();
-    // And update every 3 seconds
-    setInterval(updatePopup, 3000);
+    // Update every 1 second for the countdown
+    setInterval(updatePopup, 1000);
 });

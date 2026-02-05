@@ -63,7 +63,7 @@
   let signalHistory = [];
 
   // --- Configurable Variables ---
-  let signalIntervalMinutes = 1;
+  let signalIntervalMinutes = 5; // Fixed for v20 Quantum Decider
   let warmupCandlesCount = 50;
   
   // --- Payout Configuration ---
@@ -154,8 +154,7 @@
   // --- Core Functions ---
 
   function loadConfig() {
-      const storedInterval = localStorage.getItem('PS_SIGNAL_INTERVAL');
-      signalIntervalMinutes = storedInterval ? parseInt(storedInterval, 10) : 1;
+      // signalIntervalMinutes is fixed to 5 in v20
       const storedWarmup = localStorage.getItem('PS_WARMUP_CANDLES');
       warmupCandlesCount = storedWarmup ? parseInt(storedWarmup, 10) : 50;
   }
@@ -833,6 +832,7 @@
   /**
    * Signal loop (v20)
    * Synchronized with the 5-minute clock for forced snapshots.
+   * V20 Quantum Decider strictly follows 5-minute boundaries.
    */
   function signalLoop() {
     const now = new Date();
@@ -843,11 +843,6 @@
     if (sec === 0 && min % 5 === 0) {
       console.log(`[PS v20] ⏱️ Global 5-min snapshot triggered at ${now.toLocaleTimeString()}`);
       generateForcedBestSignal();
-    }
-    
-    // Traditional logic fallback for other intervals (if configured)
-    if (sec === 0 && signalIntervalMinutes !== 5 && min % signalIntervalMinutes === 0) {
-        maybeGenerateBestSignal();
     }
   }
 
