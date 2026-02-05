@@ -144,9 +144,9 @@ window.V20Engine = (function(indicators) {
 
   /**
    * processMarketSnapshot (v20)
-   * Global analyzer to pick the absolute best pair every 5 minutes.
+   * Global analyzer to pick the absolute best pair at a given interval.
    */
-  function processMarketSnapshot(allPairsData) {
+  function processMarketSnapshot(allPairsData, forcedDuration = 5) {
     const pairs = Object.keys(allPairsData);
     if (pairs.length === 0) return null;
 
@@ -200,7 +200,7 @@ window.V20Engine = (function(indicators) {
         pair: winner.pair,
         action: winner.direction,
         confidence: 100, // Oracle Master Override
-        tradeDuration: 5, // 5m expiry for 5m cycle
+        tradeDuration: forcedDuration,
         reasons: [`Quantum Winner (SPI: ${winner.spi})`],
         indicatorValues: { spi: winner.spi, oracleScore: winner.pairState.deepSight.winRate },
         updatedState: resetState(winner.pair, Date.now(), winner.pairState.deepSight),

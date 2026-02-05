@@ -8,6 +8,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const highConfStatsEl = document.getElementById('highConfStats');
     const countdownDisplayEl = document.getElementById('countdownDisplay');
 
+    const signalIntervalSelect = document.getElementById('signalInterval');
+    const tradeDurationSelect = document.getElementById('tradeDuration');
     const warmupCandlesSelect = document.getElementById('warmupCandles');
     const resetHistoryBtn = document.getElementById('resetHistory');
     const exportLogsBtn = document.getElementById('exportLogs');
@@ -115,11 +117,14 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateCountdown() {
+        if (!signalIntervalSelect) return;
+
+        const interval = parseInt(signalIntervalSelect.value, 10) || 5;
         const now = new Date();
         const min = now.getMinutes();
         const sec = now.getSeconds();
 
-        const boundaryMin = min + (5 - (min % 5));
+        const boundaryMin = min + (interval - (min % interval));
         const totalSecondsRemaining = (boundaryMin - min) * 60 - sec;
 
         const m = Math.floor(totalSecondsRemaining / 60);
@@ -194,12 +199,22 @@ document.addEventListener('DOMContentLoaded', function() {
                 highConfStatsEl.style.color = hcTotal > 0 && hcWinRate >= 55 ? '#4ade80' : (hcTotal > 0 ? '#facc15' : '#64748b');
 
                 // Set dropdowns to current config
+                if (metrics.currentInterval) signalIntervalSelect.value = metrics.currentInterval;
+                if (metrics.currentDuration) tradeDurationSelect.value = metrics.currentDuration;
                 warmupCandlesSelect.value = metrics.currentWarmup;
             });
         });
     }
 
     // --- Event Listeners ---
+
+    signalIntervalSelect.addEventListener('change', function() {
+        queryTabs(tabId => sendMessageToContent(tabId, { type: 'SET_INTERVAL', interval: this.value }));
+    });
+
+    tradeDurationSelect.addEventListener('change', function() {
+        queryTabs(tabId => sendMessageToContent(tabId, { type: 'SET_DURATION', duration: this.value }));
+    });
 
     warmupCandlesSelect.addEventListener('change', function() {
         queryTabs(tabId => sendMessageToContent(tabId, { type: 'SET_WARMUP', warmup: this.value }));

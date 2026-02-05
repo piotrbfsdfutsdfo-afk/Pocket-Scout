@@ -63,7 +63,8 @@
   let signalHistory = [];
 
   // --- Configurable Variables ---
-  let signalIntervalMinutes = 5; // Fixed for v20 Quantum Decider
+  let signalIntervalMinutes = 5;
+  let tradeDurationMinutes = 5;
   let warmupCandlesCount = 50;
   
   // --- Payout Configuration ---
@@ -154,13 +155,17 @@
   // --- Core Functions ---
 
   function loadConfig() {
-      // signalIntervalMinutes is fixed to 5 in v20
+      const storedInterval = localStorage.getItem('PS_SIGNAL_INTERVAL');
+      signalIntervalMinutes = storedInterval ? parseInt(storedInterval, 10) : 5;
+      const storedDuration = localStorage.getItem('PS_TRADE_DURATION');
+      tradeDurationMinutes = storedDuration ? parseInt(storedDuration, 10) : 5;
       const storedWarmup = localStorage.getItem('PS_WARMUP_CANDLES');
       warmupCandlesCount = storedWarmup ? parseInt(storedWarmup, 10) : 50;
   }
 
   function saveConfig() {
       localStorage.setItem('PS_SIGNAL_INTERVAL', signalIntervalMinutes);
+      localStorage.setItem('PS_TRADE_DURATION', tradeDurationMinutes);
       localStorage.setItem('PS_WARMUP_CANDLES', warmupCandlesCount);
   }
 
@@ -492,7 +497,7 @@
       }
     }
 
-    const result = engine.processMarketSnapshot(allPairsData);
+    const result = engine.processMarketSnapshot(allPairsData, tradeDurationMinutes);
     if (result) {
       // Update all pair states from the snapshot analysis (v20)
       if (result.allUpdatedStates) {
@@ -729,6 +734,7 @@
         highConfWins: highConfWins,
         highConfLosses: highConfLosses,
         currentInterval: signalIntervalMinutes, 
+        currentDuration: tradeDurationMinutes,
         currentWarmup: warmupCandlesCount 
       };
       
@@ -746,11 +752,13 @@
         warmupComplete: warmupCompletePairs > 0
       });
     } else if (request.type === 'SET_INTERVAL') {
-      signalIntervalMinutes = parseInt(request.interval, 10) || 1;
-      // Reset next signal time for all pairs
-      globalNextSignalAt = Date.now(); // Reset global signal timer
+      signalIntervalMinutes = parseInt(request.interval, 10) || 5;
       saveConfig();
       sendResponse({ success: true, interval: signalIntervalMinutes });
+    } else if (request.type === 'SET_DURATION') {
+      tradeDurationMinutes = parseInt(request.duration, 10) || 5;
+      saveConfig();
+      sendResponse({ success: true, duration: tradeDurationMinutes });
     } else if (request.type === 'SET_WARMUP') {
       warmupCandlesCount = parseInt(request.warmup, 10) || 50;
       saveConfig();
@@ -839,17 +847,17 @@
 
   /**
    * Signal loop (v20)
-   * Synchronized with the 5-minute clock for forced snapshots.
-   * V20 Quantum Decider strictly follows 5-minute boundaries.
+   * Synchronized with the clock for forced snapshots.
+   * V20 Quantum Decider strictly follows user-defined interval boundaries.
    */
   function signalLoop() {
     const now = new Date();
     const min = now.getMinutes();
     const sec = now.getSeconds();
 
-    // Trigger every 5 minutes at :00 second (00:00, 05:00, 10:00...)
-    if (sec === 0 && min % 5 === 0) {
-      console.log(`[PS v20] ⏱️ Global 5-min snapshot triggered at ${now.toLocaleTimeString()}`);
+    // Trigger every X minutes at :00 second
+    if (sec === 0 && min % signalIntervalMinutes === 0) {
+      console.log(`[PS v20] ⏱️ Global ${signalIntervalMinutes}-min snapshot triggered at ${now.toLocaleTimeString()}`);
       generateForcedBestSignal();
     }
   }
