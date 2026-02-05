@@ -492,8 +492,16 @@
       }
     }
 
-    const winner = engine.processMarketSnapshot(allPairsData);
-    if (winner) {
+    const result = engine.processMarketSnapshot(allPairsData);
+    if (result) {
+      // Update all pair states from the snapshot analysis (v20)
+      if (result.allUpdatedStates) {
+          for (const pair in result.allUpdatedStates) {
+              pairEngineStates[pair] = result.allUpdatedStates[pair];
+          }
+      }
+
+      const winner = result;
       console.log(`[PS v20] 🏆 Quantum Selection: ${winner.pair} | SPI: ${winner.indicatorValues.spi} | CONF: 100%`);
 
       const cleanSignal = {
@@ -508,7 +516,7 @@
         result: null
       };
 
-      // Persist state update from engine
+      // Persist state update from engine (winner gets resetState)
       if (winner.updatedState) {
           pairEngineStates[winner.pair] = winner.updatedState;
       }
@@ -816,9 +824,9 @@
             updateCandlesForPair(pair, price, now);
           }
 
-          // Sync Oracle (Deep Sight) on every tick for real-time intelligence (v19)
-          const engine = window.V19Engine || window.V18Engine;
-          if (engine && engine.syncOracle && pairEngineStates[pair]) {
+          // Sync Oracle (Deep Sight) on every tick for real-time intelligence (v20)
+          const engine = window.V20Engine || window.V19Engine;
+          if (engine && engine.syncOracle) {
             pairEngineStates[pair] = engine.syncOracle(pair, pairEngineStates[pair], price);
           }
         }

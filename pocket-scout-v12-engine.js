@@ -120,7 +120,8 @@ window.V20Engine = (function(indicators) {
     const lastCandle = candles[candles.length - 1];
 
     // 1. Deep Sight Reliability (40 pts)
-    score += (pairState.deepSight.winRate / 100) * 40;
+    const dsWinRate = pairState && pairState.deepSight ? (pairState.deepSight.winRate || 0) : 0;
+    score += (dsWinRate / 100) * 40;
 
     // 2. Institutional SMC Confluence (30 pts)
     const sweeps = smcData.liquidity.sweeps;
@@ -152,7 +153,13 @@ window.V20Engine = (function(indicators) {
     const rankings = [];
 
     pairs.forEach(pair => {
-      const { candles, pairState } = allPairsData[pair];
+      let { candles, pairState } = allPairsData[pair];
+
+      // Initialize state if missing (v20 defensive)
+      if (!pairState || !pairState.deepSight) {
+        pairState = resetState(pair, pairState ? pairState.lastSignalTimestamp : 0, pairState ? pairState.deepSight : null);
+      }
+
       const smcData = smcIndicators.analyzeSmartMoney(candles, pair);
       if (!smcData) return;
 
@@ -183,17 +190,24 @@ window.V20Engine = (function(indicators) {
     rankings.sort((a, b) => b.spi - a.spi);
 
     const winner = rankings[0];
+    const allUpdatedStates = {};
+    rankings.forEach(r => {
+        allUpdatedStates[r.pair] = r.pairState;
+    });
 
     // Forced 100% confidence for the winner
-    return {
+    const signal = {
         pair: winner.pair,
         action: winner.direction,
         confidence: 100, // Oracle Master Override
         tradeDuration: 5, // 5m expiry for 5m cycle
         reasons: [`Quantum Winner (SPI: ${winner.spi})`],
         indicatorValues: { spi: winner.spi, oracleScore: winner.pairState.deepSight.winRate },
-        updatedState: resetState(winner.pair, Date.now(), winner.pairState.deepSight)
+        updatedState: resetState(winner.pair, Date.now(), winner.pairState.deepSight),
+        allUpdatedStates: allUpdatedStates // Return all updated states to sync SPIs
     };
+
+    return signal;
   }
 
 
@@ -201,7 +215,9 @@ window.V20Engine = (function(indicators) {
    * syncOracle (v20): Resolve shadow trades on every tick
    */
   function syncOracle(pair, pairState, currentPrice) {
-    if (!pairState || !pairState.deepSight) return pairState;
+    if (!pairState || !pairState.deepSight) {
+      pairState = resetState(pair, pairState ? pairState.lastSignalTimestamp : 0, pairState ? pairState.deepSight : null);
+    }
     updateDeepSight(pairState, currentPrice);
     return pairState;
   }
