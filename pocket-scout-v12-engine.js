@@ -1,23 +1,24 @@
 /**
- * Pocket Scout v19.0.0 - Omniscient Oracle Engine
- * "Liquidity Sniper v2 with Real-time Deep Sight Learning."
+ * Pocket Scout v20.0.0 - Quantum Decider Engine
+ * "The Ultimate Dec decisional layer for PocketOption OTC."
  * 
  * PHILOSOPHY:
- * - Real-time Shadow Tracking (resolves every price tick)
- * - Continuous Learning: Sweeps recorded even during trade cooldown
- * - Omniscient Logic: HOT PAIRS get 90s cooldown and bypass all filters
+ * - Global Ranking: Evaluates all 10 pairs simultaneously every 5 minutes.
+ * - Continuous Shadow Tracking (v3): Monitors every 5-minute candle outcome.
+ * - Success Probability Index (SPI): Scientific ranking of trade quality.
  */
 
-window.V19Engine = (function(indicators) {
+window.V20Engine = (function(indicators) {
   'use strict';
 
   if (!indicators) {
     return { 
       generateSignal: () => { 
-        console.error("[PS v19 Engine] FATAL: TechnicalIndicators dependency not found.");
+        console.error("[PS v20 Engine] FATAL: TechnicalIndicators dependency not found.");
         return null;
       },
-      syncOracle: (p, s) => s
+      syncOracle: (p, s) => s,
+      processMarketSnapshot: () => null
     };
   }
 
@@ -65,23 +66,25 @@ window.V19Engine = (function(indicators) {
       lastSignalTimestamp: existingTimestamp, // Preserve cooldown
       setupData: {},
       reasons: [],
-      // Deep Sight Tracking (v18 - History 10)
+      // Deep Sight v3 Tracking
       deepSight: existingDeepSight || {
-        shadowTrades: [], // { startPrice, direction, timestamp, expiry }
-        virtualHistory: [], // ['WIN', 'LOSS', ...]
-        winRate: 0
+        shadowTrades: [],
+        virtualHistory: [],
+        winRate: 0,
+        continuousHistory: [], // Directional accuracy of every 5-min candle
+        lastSPI: 0
       }
     };
   }
 
   /**
-   * Deep Sight: Shadow Outcome Evaluator (v17)
+   * Deep Sight v3: Shadow Outcome Evaluator (v20)
    */
   function updateDeepSight(pairState, currentPrice) {
     const ds = pairState.deepSight;
     const now = Date.now();
 
-    // 1. Resolve expired shadow trades
+    // 1. Resolve shadow trades
     const unresolved = [];
     ds.shadowTrades.forEach(trade => {
       if (now >= trade.expiry) {
@@ -90,9 +93,9 @@ window.V19Engine = (function(indicators) {
 
         const result = isWin ? 'WIN' : 'LOSS';
         ds.virtualHistory.push(result);
-        if (ds.virtualHistory.length > 10) ds.virtualHistory.shift();
+        if (ds.virtualHistory.length > 15) ds.virtualHistory.shift();
 
-        if (DEBUG_MODE) console.log(`[PS v19 Deep Sight] ${pairState.direction} Shadow trade resolved: ${result} (Price: ${currentPrice} vs Entry: ${trade.startPrice})`);
+        if (DEBUG_MODE) console.log(`[PS v20 Deep Sight] Shadow resolved: ${result}`);
       } else {
         unresolved.push(trade);
       }
@@ -108,9 +111,94 @@ window.V19Engine = (function(indicators) {
     }
   }
 
+  /**
+   * SPI: Success Probability Index (v20)
+   * A unified scoring system for comparative pair analysis.
+   */
+  function calculateSPI(pair, pairState, smcData, candles) {
+    let score = 0;
+    const lastCandle = candles[candles.length - 1];
+
+    // 1. Deep Sight Reliability (40 pts)
+    score += (pairState.deepSight.winRate / 100) * 40;
+
+    // 2. Institutional SMC Confluence (30 pts)
+    const sweeps = smcData.liquidity.sweeps;
+    const hasSweep = (sweeps.bullishSweeps.length > 0 || sweeps.bearishSweeps.length > 0);
+    if (hasSweep) score += 15;
+
+    const pa = smcIndicators.detectPriceActionPatterns(candles);
+    if (pa.pinBar || pa.engulfing) score += 15;
+
+    // 3. Momentum & Acceleration (20 pts)
+    const vDelta = smcData.velocityDelta;
+    if (vDelta.aligned !== 'NONE') score += 20;
+
+    // 4. Zonal Alignment (10 pts)
+    const zone = smcData.premiumDiscount?.currentZone;
+    if (zone === 'DISCOUNT' || zone === 'PREMIUM') score += 10;
+
+    return Math.round(score);
+  }
 
   /**
-   * syncOracle (v19): Resolve shadow trades on every tick
+   * processMarketSnapshot (v20)
+   * Global analyzer to pick the absolute best pair every 5 minutes.
+   */
+  function processMarketSnapshot(allPairsData) {
+    const pairs = Object.keys(allPairsData);
+    if (pairs.length === 0) return null;
+
+    const rankings = [];
+
+    pairs.forEach(pair => {
+      const { candles, pairState } = allPairsData[pair];
+      const smcData = smcIndicators.analyzeSmartMoney(candles, pair);
+      if (!smcData) return;
+
+      const spi = calculateSPI(pair, pairState, smcData, candles);
+      pairState.deepSight.lastSPI = spi;
+
+      const lastCandle = candles[candles.length - 1];
+
+      // Determine Direction based on SMC + Momentum + Trend (v20)
+      let direction = null;
+      if (smcData.velocityDelta.aligned === 'BULLISH') direction = 'BUY';
+      else if (smcData.velocityDelta.aligned === 'BEARISH') direction = 'SELL';
+      else if (smcData.liquidity.sweeps.bullishSweeps.length > 0) direction = 'BUY';
+      else if (smcData.liquidity.sweeps.bearishSweeps.length > 0) direction = 'SELL';
+      else if (smcData.marketStructure.m15Trend === 'BULLISH') direction = 'BUY';
+      else if (smcData.marketStructure.m15Trend === 'BEARISH') direction = 'SELL';
+      else {
+          // Absolute fallback: Last candle color
+          direction = lastCandle.c >= lastCandle.o ? 'BUY' : 'SELL';
+      }
+
+      rankings.push({ pair, direction, spi, smcData, candles, pairState });
+    });
+
+    if (rankings.length === 0) return null;
+
+    // Sort by SPI descending
+    rankings.sort((a, b) => b.spi - a.spi);
+
+    const winner = rankings[0];
+
+    // Forced 100% confidence for the winner
+    return {
+        pair: winner.pair,
+        action: winner.direction,
+        confidence: 100, // Oracle Master Override
+        tradeDuration: 5, // 5m expiry for 5m cycle
+        reasons: [`Quantum Winner (SPI: ${winner.spi})`],
+        indicatorValues: { spi: winner.spi, oracleScore: winner.pairState.deepSight.winRate },
+        updatedState: resetState(winner.pair, Date.now(), winner.pairState.deepSight)
+    };
+  }
+
+
+  /**
+   * syncOracle (v20): Resolve shadow trades on every tick
    */
   function syncOracle(pair, pairState, currentPrice) {
     if (!pairState || !pairState.deepSight) return pairState;
@@ -248,7 +336,7 @@ window.V19Engine = (function(indicators) {
     };
   }
 
-  console.log('[Pocket Scout v19.0] Omniscient Oracle Engine loaded');
-  return { generateSignal, syncOracle };
+  console.log('[Pocket Scout v20.0] Quantum Decider Engine loaded');
+  return { generateSignal, syncOracle, processMarketSnapshot };
 
 })(window.TechnicalIndicators);

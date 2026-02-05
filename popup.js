@@ -101,9 +101,10 @@ document.addEventListener('DOMContentLoaded', function() {
             const cardClass = cardClasses.join(' ');
             const hotIcon = status.isHot ? ' 🔥' : '';
 
+            const spiTag = status.spi > 0 ? ` <span style="color:#60a5fa; font-size:9px;">[SPI: ${status.spi}]</span>` : '';
             html += `
                 <div class="pair-card ${cardClass}">
-                    <div class="pair-name">${displayName}${hotIcon} <span class="${payoutClass}">${payoutDisplay}</span></div>
+                    <div class="pair-name">${displayName}${hotIcon} <span class="${payoutClass}">${payoutDisplay}</span>${spiTag}</div>
                     <div class="pair-price">${price}</div>
                     <div class="pair-status ${statusClass}">${statusText}</div>
                 </div>

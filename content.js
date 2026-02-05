@@ -12,7 +12,7 @@
 (function() {
   'use strict';
 
-  const VERSION = '19.0.0';
+  const VERSION = '20.0.0';
   const FEED_KEY = 'PS_AT_FEED';
   const DATASTREAM_FEED_KEY = 'POCKET_DATASTREAM_FEED';
   const HISTORY_LIMIT = 50;
@@ -446,41 +446,19 @@
    */
   function generateSignalCandidateForPair(pair) {
     if (!pairWarmupComplete[pair]) return null;
-    const engine = window.V19Engine || window.V18Engine || window.V17Engine || window.V15Engine || window.V14Engine || window.V13Engine || window.V12Engine;
-    if (!engine) {
-        console.error(`[PS v${VERSION}] FATAL: Signal Engine not available.`);
-        return null;
-    }
+    const engine = window.V20Engine || window.V19Engine;
+    if (!engine) return null;
     
     const ohlcM1 = pairOhlcM1[pair] || [];
-    const lastPrice = pairLastPrices[pair];
-    
-    if (ohlcM1.length < warmupCandlesCount) {
-        return null;
-    }
+    if (ohlcM1.length < warmupCandlesCount) return null;
 
-    const engineCandles = [...ohlcM1];
-    const engineOutput = engine.generateSignal(engineCandles, pair, pairEngineStates[pair]);
+    const engineOutput = engine.generateSignal([...ohlcM1], pair, pairEngineStates[pair]);
 
-    // Handle both formats: { signal, updatedState } (v13+) and signalObject (v12)
-    let signal = engineOutput;
-    let updatedState = null;
+    let signal = engineOutput?.signal || engineOutput;
+    if (engineOutput?.updatedState) pairEngineStates[pair] = engineOutput.updatedState;
 
-    if (engineOutput && engineOutput.hasOwnProperty('signal')) {
-      signal = engineOutput.signal;
-      updatedState = engineOutput.updatedState;
-    }
+    if (!signal) return null;
 
-    // Persist state
-    if (updatedState) {
-      pairEngineStates[pair] = updatedState;
-    }
-
-    if (!signal) {
-      return null;
-    }
-
-    // Include pair name in the signal for Auto Trader
     return { 
       pair: pair,
       action: signal.action,
@@ -489,10 +467,55 @@
       durationReason: signal.durationReason,
       reasons: signal.reasons,
       timestamp: Date.now(), 
-      entryPrice: lastPrice, 
+      entryPrice: pairLastPrices[pair],
       result: null,
       indicatorValues: signal.indicatorValues
     };
+  }
+
+  /**
+   * generateForcedBestSignal (v20)
+   * Collects all pairs and forces the engine to pick the absolute winner.
+   */
+  function generateForcedBestSignal() {
+    const engine = window.V20Engine;
+    if (!engine || !engine.processMarketSnapshot) return;
+
+    readPayoutsFromDOM();
+    const allPairsData = {};
+
+    for (const pair of Object.keys(pairWarmupComplete)) {
+      if (pairWarmupComplete[pair] && hasSufficientPayout(pair)) {
+        allPairsData[pair] = {
+          candles: [...(pairOhlcM1[pair] || [])],
+          pairState: pairEngineStates[pair] || {}
+        };
+      }
+    }
+
+    const winner = engine.processMarketSnapshot(allPairsData);
+    if (winner) {
+      console.log(`[PS v20] 🏆 Quantum Selection: ${winner.pair} | SPI: ${winner.indicatorValues.spi} | CONF: 100%`);
+
+      const cleanSignal = {
+        pair: winner.pair,
+        action: winner.action,
+        confidence: 100,
+        duration: winner.tradeDuration,
+        durationReason: winner.durationReason,
+        reasons: winner.reasons,
+        timestamp: Date.now(),
+        entryPrice: pairLastPrices[winner.pair],
+        result: null
+      };
+
+      // Persist state update from engine
+      if (winner.updatedState) {
+          pairEngineStates[winner.pair] = winner.updatedState;
+      }
+
+      recordSignal(winner.pair, cleanSignal);
+    }
   }
 
   /**
@@ -677,7 +700,8 @@
         timeSinceUpdate: timeSinceUpdate,
         payout: payout,
         payoutEligible: payout >= MIN_PAYOUT_PERCENT,
-        isHot: !!(pairEngineStates[pair]?.deepSight?.winRate >= 80 && pairEngineStates[pair]?.deepSight?.virtualHistory?.length >= 3)
+        isHot: !!(pairEngineStates[pair]?.deepSight?.winRate >= 80 && pairEngineStates[pair]?.deepSight?.virtualHistory?.length >= 3),
+        spi: pairEngineStates[pair]?.deepSight?.lastSPI || 0
       };
     }
     
@@ -807,17 +831,23 @@
   }
 
   /**
-   * Signal loop - generates ONE best signal across all pairs per interval
-   * Now runs every 1 second for real-time response with clock synchronization
+   * Signal loop (v20)
+   * Synchronized with the 5-minute clock for forced snapshots.
    */
   function signalLoop() {
     const now = new Date();
-    const currentSecond = now.getSeconds();
+    const min = now.getMinutes();
+    const sec = now.getSeconds();
+
+    // Trigger every 5 minutes at :00 second (00:00, 05:00, 10:00...)
+    if (sec === 0 && min % 5 === 0) {
+      console.log(`[PS v20] ⏱️ Global 5-min snapshot triggered at ${now.toLocaleTimeString()}`);
+      generateForcedBestSignal();
+    }
     
-    // Clock sync: Only generate signals at :00 second (start of new minute)
-    // This ensures signals are ready exactly when the new M1 candle forms
-    if (currentSecond === 0) {
-      maybeGenerateBestSignal();
+    // Traditional logic fallback for other intervals (if configured)
+    if (sec === 0 && signalIntervalMinutes !== 5 && min % signalIntervalMinutes === 0) {
+        maybeGenerateBestSignal();
     }
   }
 
