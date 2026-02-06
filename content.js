@@ -60,6 +60,7 @@
   // Global stats
   let totalSignals = 0, winningSignals = 0, losingSignals = 0;
   let highConfSignals = 0, highConfWins = 0, highConfLosses = 0;
+  let consecutiveLossesCount = 0; // v20.1 Loss Streak Protection
   let signalHistory = [];
 
   // --- Configurable Variables ---
@@ -178,6 +179,7 @@
       highConfSignals = stats.highConfTotal || 0;
       highConfWins = stats.highConfWins || 0;
       highConfLosses = stats.highConfLosses || 0;
+      consecutiveLossesCount = stats.consecutiveLosses || 0;
       signalHistory = JSON.parse(localStorage.getItem('PS_V10_HISTORY') || '[]');
       
       // Log loaded stats for debugging
@@ -197,7 +199,8 @@
           losses: losingSignals,
           highConfTotal: highConfSignals,
           highConfWins: highConfWins,
-          highConfLosses: highConfLosses
+          highConfLosses: highConfLosses,
+          consecutiveLosses: consecutiveLossesCount
         };
         localStorage.setItem('PS_V10_STATS', JSON.stringify(stats));
         localStorage.setItem('PS_V10_HISTORY', JSON.stringify(signalHistory.slice(0, HISTORY_LIMIT)));
@@ -507,15 +510,25 @@
       }
 
       const winner = result;
-      console.log(`[PS v20] 🏆 Quantum Selection: ${winner.pair} | SPI: ${winner.indicatorValues.spi} | CONF: 100%`);
+
+      // v20.1 Loss Streak Protection (Probe Logic)
+      let finalConfidence = 100;
+      let extraReasons = [];
+      if (consecutiveLossesCount >= 3) {
+          finalConfidence = 60;
+          extraReasons.push(`Loss Streak Protection (${consecutiveLossesCount} losses)`);
+          console.warn(`[PS v20.1] 🛡️ Streak protection active: Limiting confidence to 60% after ${consecutiveLossesCount} losses.`);
+      }
+
+      console.log(`[PS v20] 🏆 Quantum Selection: ${winner.pair} | SPI: ${winner.indicatorValues.spi} | CONF: ${finalConfidence}%`);
 
       const cleanSignal = {
         pair: winner.pair,
         action: winner.action,
-        confidence: 100,
+        confidence: finalConfidence,
         duration: winner.tradeDuration,
         durationReason: winner.durationReason,
-        reasons: winner.reasons,
+        reasons: [...winner.reasons, ...extraReasons],
         timestamp: Date.now(),
         entryPrice: pairLastPrices[winner.pair],
         result: null
@@ -660,7 +673,13 @@
     signal.result = isWin ? 'WIN' : 'LOSS';
     signal.exitPrice = lastPrice;
     
-    if (isWin) winningSignals++; else losingSignals++;
+    if (isWin) {
+        winningSignals++;
+        consecutiveLossesCount = 0; // Reset streak on win
+    } else {
+        losingSignals++;
+        consecutiveLossesCount++; // Increment streak on loss
+    }
     
     if (signal.confidence >= MIN_CONFIDENCE_PERCENT) {
       if (isWin) highConfWins++; else highConfLosses++;
@@ -770,6 +789,7 @@
       highConfSignals = 0;
       highConfWins = 0;
       highConfLosses = 0;
+      consecutiveLossesCount = 0; // Reset streak on history reset
       signalHistory = []; 
       mostRecentSignal = null; // Reset most recent signal
       // Reset per-pair last signals and engine states
