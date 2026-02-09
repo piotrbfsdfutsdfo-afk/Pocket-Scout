@@ -12,7 +12,7 @@
 (function() {
   'use strict';
 
-  const VERSION = '20.0.0';
+  const VERSION = '21.1.0';
   const FEED_KEY = 'PS_AT_FEED';
   const DATASTREAM_FEED_KEY = 'POCKET_DATASTREAM_FEED';
   const HISTORY_LIMIT = 50;
@@ -521,7 +521,7 @@
           console.warn(`[PS v20.1] 🛡️ Streak protection active: Limiting confidence to 60% after ${consecutiveLossesCount} losses.`);
       }
 
-      console.log(`[PS v21] 🏆 Master Selection: ${winner.pair} | SPI: ${winner.indicatorValues.spi} | CONF: ${finalConfidence}%`);
+      console.log(`[PS v21.1] 🚀 Force Winner: ${winner.pair} | SPI: ${winner.indicatorValues.spi} | CONF: ${finalConfidence}%`);
 
       const cleanSignal = {
         pair: winner.pair,
@@ -541,8 +541,6 @@
       }
 
       recordSignal(winner.pair, cleanSignal);
-    } else {
-        console.log(`[PS v21] 🔍 Global Scan Complete: No institutional-grade setups found (SPI < 70).`);
     }
   }
 

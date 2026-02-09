@@ -34,7 +34,7 @@ window.V20Engine = (function(indicators) {
   };
 
   const BQI_THRESHOLD = 55; // Strict floor (v21)
-  const MASTER_SPI_THRESHOLD = 70; // Institutional Grade Filter
+  const MASTER_SPI_THRESHOLD = 0; // Forced Signal Mode (v21.1)
   const STATE_TIMEOUT_CANDLES = 40;
   const COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes throttle (v17)
 
@@ -178,18 +178,32 @@ window.V20Engine = (function(indicators) {
       const spi = calculateSPI(pair, pairState, smcData, candles);
       pairState.deepSight.lastSPI = spi;
 
-      // Determine Bias based on Market Structure (v21 Strict)
+      // Determine Direction based on Multi-Layer Fallback (v21.1 Forced Signal)
       const trend = smcData.marketStructure.m15Trend;
       const zoneBias = smcData.premiumDiscount?.bias || 'NEUTRAL';
+      const sweeps = smcData.liquidity.sweeps;
+      const vDelta = smcData.velocityDelta;
+      const lastCandle = candles[candles.length - 1];
 
       let direction = null;
+
+      // Layer 1: Trend + Zone alignment (Masterful)
       if (trend === 'BULLISH' && zoneBias !== 'BEARISH') direction = 'BUY';
       else if (trend === 'BEARISH' && zoneBias !== 'BULLISH') direction = 'SELL';
+      // Layer 2: Momentum Alignment
+      else if (vDelta.aligned === 'BULLISH') direction = 'BUY';
+      else if (vDelta.aligned === 'BEARISH') direction = 'SELL';
+      // Layer 3: Zonal Bias
       else if (zoneBias !== 'NEUTRAL') direction = zoneBias === 'BULLISH' ? 'BUY' : 'SELL';
+      // Layer 4: Liquidity Sweeps
+      else if (sweeps.bullishSweeps.length > 0) direction = 'BUY';
+      else if (sweeps.bearishSweeps.length > 0) direction = 'SELL';
+      // Layer 5: Trend Only
+      else if (trend !== 'NEUTRAL') direction = trend === 'BULLISH' ? 'BUY' : 'SELL';
+      // Layer 6: Absolute Force (Last Candle Color)
+      else direction = lastCandle.c >= lastCandle.o ? 'BUY' : 'SELL';
 
-      if (direction) {
-        rankings.push({ pair, direction, spi, smcData, candles, pairState });
-      }
+      rankings.push({ pair, direction, spi, smcData, candles, pairState });
     });
 
     if (rankings.length === 0) return null;
@@ -203,14 +217,13 @@ window.V20Engine = (function(indicators) {
         allUpdatedStates[r.pair] = r.pairState;
     });
 
-    // MASTER SPI FLOOR (v21)
-    if (!winner || winner.spi < MASTER_SPI_THRESHOLD) {
-        console.log(`[PS v21] 🛑 Market conditions suboptimal. Top SPI: ${winner ? winner.spi : 0} < ${MASTER_SPI_THRESHOLD}. Skipping cycle.`);
+    // MASTER SPI FLOOR (v21.1 Forced)
+    if (!winner) {
         return { signal: null, allUpdatedStates };
     }
 
     // High Quality Winner
-    console.log(`[PS v21] 🏆 Master Selection: ${winner.pair} | SPI: ${winner.spi} | CONF: 100%`);
+    console.log(`[PS v21.1] 🏆 Force Winner: ${winner.pair} | SPI: ${winner.spi} | CONF: 100%`);
 
     const signal = {
         pair: winner.pair,
