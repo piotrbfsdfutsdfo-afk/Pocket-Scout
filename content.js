@@ -501,14 +501,15 @@
     }
 
     const result = engine.processMarketSnapshot(allPairsData, tradeDurationMinutes);
-    if (result) {
-      // Update all pair states from the snapshot analysis (v20)
-      if (result.allUpdatedStates) {
-          for (const pair in result.allUpdatedStates) {
-              pairEngineStates[pair] = result.allUpdatedStates[pair];
-          }
-      }
 
+    // Update all pair states regardless of whether a signal was generated (v21 sync)
+    if (result && result.allUpdatedStates) {
+        for (const pair in result.allUpdatedStates) {
+            pairEngineStates[pair] = result.allUpdatedStates[pair];
+        }
+    }
+
+    if (result && result.pair) {
       const winner = result;
 
       // v20.1 Loss Streak Protection (Probe Logic)
@@ -520,7 +521,7 @@
           console.warn(`[PS v20.1] 🛡️ Streak protection active: Limiting confidence to 60% after ${consecutiveLossesCount} losses.`);
       }
 
-      console.log(`[PS v20] 🏆 Quantum Selection: ${winner.pair} | SPI: ${winner.indicatorValues.spi} | CONF: ${finalConfidence}%`);
+      console.log(`[PS v21] 🏆 Master Selection: ${winner.pair} | SPI: ${winner.indicatorValues.spi} | CONF: ${finalConfidence}%`);
 
       const cleanSignal = {
         pair: winner.pair,
@@ -540,6 +541,8 @@
       }
 
       recordSignal(winner.pair, cleanSignal);
+    } else {
+        console.log(`[PS v21] 🔍 Global Scan Complete: No institutional-grade setups found (SPI < 70).`);
     }
   }
 

@@ -33,7 +33,8 @@ window.V20Engine = (function(indicators) {
     RETEST: 'RETEST'
   };
 
-  const BQI_THRESHOLD = 45; // Aggressive floor
+  const BQI_THRESHOLD = 55; // Strict floor (v21)
+  const MASTER_SPI_THRESHOLD = 70; // Institutional Grade Filter
   const STATE_TIMEOUT_CANDLES = 40;
   const COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes throttle (v17)
 
@@ -112,39 +113,50 @@ window.V20Engine = (function(indicators) {
   }
 
   /**
-   * SPI: Success Probability Index (v20)
+   * SPI: Success Probability Index (v21 Masterful Edition)
    * A unified scoring system for comparative pair analysis.
    */
   function calculateSPI(pair, pairState, smcData, candles) {
     let score = 0;
     const lastCandle = candles[candles.length - 1];
 
-    // 1. Deep Sight Reliability (40 pts)
-    const dsWinRate = pairState && pairState.deepSight ? (pairState.deepSight.winRate || 0) : 0;
-    score += (dsWinRate / 100) * 40;
+    // 1. Deep Sight Master Reliability (40 pts)
+    // Weighted by virtual history length - need proof of consistency
+    const ds = pairState?.deepSight;
+    const dsWinRate = ds ? (ds.winRate || 0) : 0;
+    const consistencyBonus = ds && ds.virtualHistory.length >= 5 ? 10 : 0;
+    score += (dsWinRate / 100) * 30 + consistencyBonus;
 
-    // 2. Institutional SMC Confluence (30 pts)
+    // 2. Institutional SMC Evidence (30 pts)
     const sweeps = smcData.liquidity.sweeps;
     const hasSweep = (sweeps.bullishSweeps.length > 0 || sweeps.bearishSweeps.length > 0);
     if (hasSweep) score += 15;
 
+    const unmitigatedOB = (smcData.orderBlocks.bullishOB.some(ob => !ob.mitigated) ||
+                          smcData.orderBlocks.bearishOB.some(ob => !ob.mitigated));
+    if (unmitigatedOB) score += 10;
+
     const pa = smcIndicators.detectPriceActionPatterns(candles);
-    if (pa.pinBar || pa.engulfing) score += 15;
+    if (pa.pinBar || pa.engulfing) score += 5;
 
-    // 3. Momentum & Acceleration (20 pts)
+    // 3. Momentum & Trend Confluence (20 pts)
     const vDelta = smcData.velocityDelta;
-    if (vDelta.aligned !== 'NONE') score += 20;
+    const trend = smcData.marketStructure.m15Trend;
+    if (vDelta.aligned !== 'NONE') score += 10;
+    if (trend !== 'NEUTRAL') score += 10;
 
-    // 4. Zonal Alignment (10 pts)
+    // 4. Zonal Precision & Volatility (10 pts)
     const zone = smcData.premiumDiscount?.currentZone;
-    if (zone === 'DISCOUNT' || zone === 'PREMIUM') score += 10;
+    const atr = smcIndicators.calculateATR(candles, 14);
+    if (zone === 'DISCOUNT' || zone === 'PREMIUM') score += 5;
+    if (atr.ratio >= 0.8) score += 5; // Avoid dead markets
 
     return Math.round(score);
   }
 
   /**
-   * processMarketSnapshot (v20)
-   * Global analyzer to pick the absolute best pair at a given interval.
+   * processMarketSnapshot (v21 Masterful Edition)
+   * Global analyzer with strict SPI floor and structural requirements.
    */
   function processMarketSnapshot(allPairsData, forcedDuration = 5) {
     const pairs = Object.keys(allPairsData);
@@ -166,22 +178,18 @@ window.V20Engine = (function(indicators) {
       const spi = calculateSPI(pair, pairState, smcData, candles);
       pairState.deepSight.lastSPI = spi;
 
-      const lastCandle = candles[candles.length - 1];
+      // Determine Bias based on Market Structure (v21 Strict)
+      const trend = smcData.marketStructure.m15Trend;
+      const zoneBias = smcData.premiumDiscount?.bias || 'NEUTRAL';
 
-      // Determine Direction based on SMC + Momentum + Trend (v20)
       let direction = null;
-      if (smcData.velocityDelta.aligned === 'BULLISH') direction = 'BUY';
-      else if (smcData.velocityDelta.aligned === 'BEARISH') direction = 'SELL';
-      else if (smcData.liquidity.sweeps.bullishSweeps.length > 0) direction = 'BUY';
-      else if (smcData.liquidity.sweeps.bearishSweeps.length > 0) direction = 'SELL';
-      else if (smcData.marketStructure.m15Trend === 'BULLISH') direction = 'BUY';
-      else if (smcData.marketStructure.m15Trend === 'BEARISH') direction = 'SELL';
-      else {
-          // Absolute fallback: Last candle color
-          direction = lastCandle.c >= lastCandle.o ? 'BUY' : 'SELL';
-      }
+      if (trend === 'BULLISH' && zoneBias !== 'BEARISH') direction = 'BUY';
+      else if (trend === 'BEARISH' && zoneBias !== 'BULLISH') direction = 'SELL';
+      else if (zoneBias !== 'NEUTRAL') direction = zoneBias === 'BULLISH' ? 'BUY' : 'SELL';
 
-      rankings.push({ pair, direction, spi, smcData, candles, pairState });
+      if (direction) {
+        rankings.push({ pair, direction, spi, smcData, candles, pairState });
+      }
     });
 
     if (rankings.length === 0) return null;
@@ -195,16 +203,24 @@ window.V20Engine = (function(indicators) {
         allUpdatedStates[r.pair] = r.pairState;
     });
 
-    // Forced 100% confidence for the winner
+    // MASTER SPI FLOOR (v21)
+    if (!winner || winner.spi < MASTER_SPI_THRESHOLD) {
+        console.log(`[PS v21] 🛑 Market conditions suboptimal. Top SPI: ${winner ? winner.spi : 0} < ${MASTER_SPI_THRESHOLD}. Skipping cycle.`);
+        return { signal: null, allUpdatedStates };
+    }
+
+    // High Quality Winner
+    console.log(`[PS v21] 🏆 Master Selection: ${winner.pair} | SPI: ${winner.spi} | CONF: 100%`);
+
     const signal = {
         pair: winner.pair,
         action: winner.direction,
         confidence: 100, // Oracle Master Override
         tradeDuration: forcedDuration,
-        reasons: [`Quantum Winner (SPI: ${winner.spi})`],
+        reasons: [`Masterful Selection (SPI: ${winner.spi})`, `Trend: ${winner.smcData.marketStructure.m15Trend}`],
         indicatorValues: { spi: winner.spi, oracleScore: winner.pairState.deepSight.winRate },
         updatedState: resetState(winner.pair, Date.now(), winner.pairState.deepSight),
-        allUpdatedStates: allUpdatedStates // Return all updated states to sync SPIs
+        allUpdatedStates: allUpdatedStates
     };
 
     return signal;
