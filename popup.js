@@ -1,144 +1,81 @@
 document.addEventListener('DOMContentLoaded', function() {
 
-    const statusEl = document.getElementById('status');
-    const metricsEl = document.getElementById('metrics');
-    const lastSignalContentEl = document.getElementById('lastSignalContent');
-    const pairsInfoEl = document.getElementById('pairsInfo');
     const pairsGridEl = document.getElementById('pairsGrid');
-    const highConfStatsEl = document.getElementById('highConfStats');
-    const countdownDisplayEl = document.getElementById('countdownDisplay');
+    const lastSignalContentEl = document.getElementById('lastSignalContent');
+    const intelFillEl = document.getElementById('intel-fill');
+    const intelPctEl = document.getElementById('intel-pct');
+    const countdownEl = document.getElementById('global-countdown');
+
+    const statTotalEl = document.getElementById('stat-total');
+    const statWREl = document.getElementById('stat-wr');
+    const statCyclesEl = document.getElementById('stat-cycles');
 
     const signalIntervalSelect = document.getElementById('signalInterval');
     const tradeDurationSelect = document.getElementById('tradeDuration');
-    const warmupCandlesSelect = document.getElementById('warmupCandles');
     const resetHistoryBtn = document.getElementById('resetHistory');
-    const exportLogsBtn = document.getElementById('exportLogs');
 
     function queryTabs(callback) {
         chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
             if (tabs.length > 0) {
                 callback(tabs[0].id);
-            } else {
-                console.error("Could not find active tab.");
             }
         });
     }
 
     function sendMessageToContent(tabId, message, callback) {
         chrome.tabs.sendMessage(tabId, message, function(response) {
-            if (chrome.runtime.lastError) {
-                console.error("Message failed:", chrome.runtime.lastError.message);
-                statusEl.textContent = "Error: Refresh page";
-                statusEl.className = 'status-bar status-error';
-                return;
-            }
             if (callback) callback(response);
         });
     }
 
     function formatPrice(price, pairName) {
         if (price == null) return '--';
-        // Format based on pair type - check for JPY in pair name
-        if (pairName && pairName.includes('JPY')) {
-            return price.toFixed(3); // JPY pairs
-        }
-        return price.toFixed(5); // Regular pairs
+        return pairName.includes('JPY') ? price.toFixed(3) : price.toFixed(5);
     }
 
-    function formatTimeSince(milliseconds) {
-        const seconds = Math.floor(milliseconds / 1000);
+    function updateCountdown() {
+        const interval = parseInt(signalIntervalSelect.value, 10) || 5;
+        const now = new Date();
+        const min = now.getMinutes();
+        const sec = now.getSeconds();
+        const boundaryMin = min + (interval - (min % interval));
+        const totalSecs = (boundaryMin - min) * 60 - sec;
         
-        // For times over 90 seconds, show in minutes
-        if (seconds >= 90) {
-            const minutes = Math.floor(seconds / 60);
-            return `${minutes}m ago`;
-        }
+        const m = Math.floor(totalSecs / 60);
+        const s = totalSecs % 60;
+        countdownEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
         
-        return `${seconds}s ago`;
+        if (totalSecs <= 15) countdownEl.classList.add('pulse');
+        else countdownEl.classList.remove('pulse');
     }
 
     function renderPairsGrid(pairStatus) {
-        if (!pairStatus || Object.keys(pairStatus).length === 0) {
-            pairsGridEl.innerHTML = '<div class="pair-card" style="grid-column: span 2; text-align: center; color: #64748b;">Waiting for POCKET_DATASTREAM_FEED data...</div>';
-            return;
-        }
-
+        if (!pairStatus) return;
         const pairs = Object.keys(pairStatus).sort();
         let html = '';
 
         for (const pair of pairs) {
             const status = pairStatus[pair];
+            const name = pair.replace('_OTC', '').replace('/', '');
             const price = formatPrice(status.price, pair);
-            let statusClass = 'no-data';
-            let statusText = 'No data';
-            const cardClasses = [];
+            const cycles = status.cycles || 0;
+            const spi = status.spi || 0;
             
-            // Payout information
-            const payout = status.payout || 0;
-            const payoutEligible = status.payoutEligible || false;
-            const payoutClass = payoutEligible ? 'payout-eligible' : 'payout-low';
-            const payoutDisplay = payout > 0 ? `+${payout}%` : '--';
-
-            // Check if frozen
-            if (status.frozen) {
-                statusClass = 'no-data'; // Use no-data (red) for frozen
-                cardClasses.push('frozen'); // Add frozen class to card
-                const timeDisplay = formatTimeSince(status.timeSinceUpdate);
-                statusText = `❄️ FROZEN (${timeDisplay})`;
-            } else if (status.warmupComplete) {
-                statusClass = 'ready';
-                statusText = `✅ Ready (${status.candles} candles)`;
-            } else if (status.candles > 0) {
-                statusClass = 'warmup';
-                statusText = `⏳ Warmup (${status.candles} candles)`;
-            }
-            
-            // Add low-payout class to card if payout < 80%
-            if (!payoutEligible && payout > 0) {
-                cardClasses.push('low-payout');
-            }
-
-            // Shorten pair name for display
-            const displayName = pair.replace('_OTC', '');
-            const cardClass = cardClasses.join(' ');
-            const hotIcon = status.isHot ? ' 🔥' : '';
-
-            const spiTag = status.spi > 0 ? ` <span style="color:#60a5fa; font-size:9px;">[SPI: ${status.spi}]</span>` : '';
             html += `
-                <div class="pair-card ${cardClass}">
-                    <div class="pair-name">${displayName}${hotIcon} <span class="${payoutClass}">${payoutDisplay}</span>${spiTag}</div>
-                    <div class="pair-price">${price}</div>
-                    <div class="pair-status ${statusClass}">${statusText}</div>
+                <div class="node-card">
+                    <div class="node-name">
+                        <span>${name}</span>
+                        <span class="synapse-act">SPI: ${spi}</span>
+                    </div>
+                    <div class="node-price">${price}</div>
+                    <div class="node-meta">
+                        <span style="color:${status.warmupComplete ? 'var(--success)' : 'var(--dim)'}">${status.warmupComplete ? 'SYNCS' : 'WAIT'}</span>
+                        <span style="opacity:0.5">${cycles} CYCLES</span>
+                    </div>
                 </div>
             `;
         }
-
         pairsGridEl.innerHTML = html;
-    }
-
-    function updateCountdown() {
-        if (!signalIntervalSelect) return;
-
-        const interval = parseInt(signalIntervalSelect.value, 10) || 5;
-        const now = new Date();
-        const min = now.getMinutes();
-        const sec = now.getSeconds();
-
-        const boundaryMin = min + (interval - (min % interval));
-        const totalSecondsRemaining = (boundaryMin - min) * 60 - sec;
-
-        const m = Math.floor(totalSecondsRemaining / 60);
-        const s = totalSecondsRemaining % 60;
-
-        if (countdownDisplayEl) {
-            countdownDisplayEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-            // Pulse effect when near signal
-            if (totalSecondsRemaining <= 10) {
-                countdownDisplayEl.style.color = '#f87171';
-            } else {
-                countdownDisplayEl.style.color = '#60a5fa';
-            }
-        }
     }
 
     function updatePopup() {
@@ -147,66 +84,43 @@ document.addEventListener('DOMContentLoaded', function() {
             sendMessageToContent(tabId, { type: 'GET_METRICS' }, (response) => {
                 if (!response) return;
 
-                // Update status
-                const activePairs = response.activePairs || 0;
-                const warmupCompletePairs = response.warmupCompletePairs || 0;
-
-                if (warmupCompletePairs > 0) {
-                    statusEl.textContent = `✅ Signal Engine Active (${warmupCompletePairs}/${activePairs} pairs ready)`;
-                    statusEl.className = 'status-bar status-ok';
-                } else if (activePairs > 0) {
-                    statusEl.textContent = `⏳ Warming up... (${activePairs} pairs detected)`;
-                    statusEl.className = 'status-bar status-warmup';
-                } else {
-                    statusEl.textContent = '⏳ Waiting for POCKET_DATASTREAM_FEED...';
-                    statusEl.className = 'status-bar status-warmup';
-                }
-
-                // Update metrics
                 const { metrics, lastSignal, pairStatus } = response;
-                metricsEl.innerHTML = `
-                    <div class="metric"><div class="metric-label">Win Rate</div><div class="metric-value">${metrics.winRate.toFixed(1)}%</div></div>
-                    <div class="metric"><div class="metric-label">Total</div><div class="metric-value">${metrics.totalSignals}</div></div>
-                    <div class="metric"><div class="metric-label">Wins</div><div class="metric-value">${metrics.wins}</div></div>
-                    <div class="metric"><div class="metric-label">Losses</div><div class="metric-value">${metrics.losses}</div></div>
-                `;
 
-                // Render pairs grid
+                // Update stats
+                statTotalEl.textContent = metrics.totalSignals;
+                statWREl.textContent = metrics.winRate.toFixed(1) + '%';
+
+                // Intelligence Calculation (based on global cycles)
+                let totalCycles = 0;
+                if (pairStatus) {
+                    Object.values(pairStatus).forEach(s => totalCycles += (s.cycles || 0));
+                }
+                statCyclesEl.textContent = totalCycles;
+
+                const intelLevel = Math.min(100, Math.floor(totalCycles / 1.5)); // Goal: 150 cycles for 100%
+                intelFillEl.style.width = intelLevel + '%';
+                intelPctEl.textContent = intelLevel + '%';
+
                 renderPairsGrid(pairStatus);
 
-                // Update last signal (includes pair name and confidence %)
                 if (lastSignal) {
                     const time = new Date(lastSignal.timestamp).toLocaleTimeString();
-                    const result = lastSignal.result ? `<span style="color:${lastSignal.result === 'WIN' ? '#4ade80' : '#f87171'}">[${lastSignal.result}]</span>` : '[PENDING]';
-                    const pairDisplay = lastSignal.pair ? `<strong>${lastSignal.pair.replace('_OTC', '')}</strong> ` : '';
-                    const entryPrice = lastSignal.entryPrice ? formatPrice(lastSignal.entryPrice, lastSignal.pair) : '--';
-                    const confidence = lastSignal.confidence !== undefined ? `(${lastSignal.confidence}%)` : '';
-                    lastSignalContentEl.innerHTML = `${pairDisplay}<strong>${lastSignal.action}</strong> ${confidence} @ ${entryPrice} for <strong>${lastSignal.duration}m</strong> (${time}) ${result}`;
-                } else {
-                    lastSignalContentEl.textContent = 'Waiting for first signal...';
+                    const actionColor = lastSignal.action === 'BUY' ? 'var(--success)' : 'var(--danger)';
+                    const resTag = lastSignal.result ? `[${lastSignal.result}]` : '[LIVE]';
+
+                    lastSignalContentEl.innerHTML = `
+                        <span style="color:var(--dim)">${lastSignal.pair.replace('_OTC','')}</span>
+                        <span style="color:${actionColor}">${lastSignal.action}</span>
+                        @ ${formatPrice(lastSignal.entryPrice, lastSignal.pair)}
+                        <br/><span style="font-size:10px; opacity:0.7">${lastSignal.reasons[0]} | ${time} ${resTag}</span>
+                    `;
                 }
 
-                // Update pairs info footer
-                pairsInfoEl.textContent = `Active Pairs: ${activePairs} / Ready: ${warmupCompletePairs}`;
-
-                // Update high-confidence stats (≥50%)
-                const hcTotal = metrics.highConfTotal || 0;
-                const hcWinRate = metrics.highConfWinRate || 0;
-                const hcWR = hcTotal > 0 ? hcWinRate.toFixed(1) : '--';
-                const hcWins = metrics.highConfWins || 0;
-                const hcLosses = metrics.highConfLosses || 0;
-                highConfStatsEl.innerHTML = `≥70% Conf: <strong>${hcTotal}</strong> signals (${hcWins}W/${hcLosses}L) | WR: <strong>${hcWR}%</strong>`;
-                highConfStatsEl.style.color = hcTotal > 0 && hcWinRate >= 55 ? '#4ade80' : (hcTotal > 0 ? '#facc15' : '#64748b');
-
-                // Set dropdowns to current config
-                if (metrics.currentInterval) signalIntervalSelect.value = metrics.currentInterval;
-                if (metrics.currentDuration) tradeDurationSelect.value = metrics.currentDuration;
-                warmupCandlesSelect.value = metrics.currentWarmup;
+                signalIntervalSelect.value = metrics.currentInterval;
+                tradeDurationSelect.value = metrics.currentDuration;
             });
         });
     }
-
-    // --- Event Listeners ---
 
     signalIntervalSelect.addEventListener('change', function() {
         queryTabs(tabId => sendMessageToContent(tabId, { type: 'SET_INTERVAL', interval: this.value }));
@@ -216,38 +130,12 @@ document.addEventListener('DOMContentLoaded', function() {
         queryTabs(tabId => sendMessageToContent(tabId, { type: 'SET_DURATION', duration: this.value }));
     });
 
-    warmupCandlesSelect.addEventListener('change', function() {
-        queryTabs(tabId => sendMessageToContent(tabId, { type: 'SET_WARMUP', warmup: this.value }));
-    });
-
     resetHistoryBtn.addEventListener('click', function() {
-        if (confirm('Are you sure you want to reset all stats and signal history?')) {
+        if (confirm('RESET ALL NEURAL DATA?')) {
             queryTabs(tabId => sendMessageToContent(tabId, { type: 'RESET_HISTORY' }, updatePopup));
         }
     });
 
-    exportLogsBtn.addEventListener('click', function() {
-        this.textContent = 'Exporting...';
-        this.disabled = true;
-        queryTabs(tabId => {
-            sendMessageToContent(tabId, { type: 'EXPORT_LOGS' }, (response) => {
-                if (response && response.logs) {
-                    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(response.logs, null, 2));
-                    const downloadAnchorNode = document.createElement('a');
-                    downloadAnchorNode.setAttribute("href", dataStr);
-                    downloadAnchorNode.setAttribute("download", "diagnostic_logs.json");
-                    document.body.appendChild(downloadAnchorNode); // required for firefox
-                    downloadAnchorNode.click();
-                    downloadAnchorNode.remove();
-                }
-                this.textContent = 'Export Logs';
-                this.disabled = false;
-            });
-        });
-    });
-
-    // Initial update
-    updatePopup();
-    // Update every 1 second for the countdown
     setInterval(updatePopup, 1000);
+    updatePopup();
 });

@@ -3,102 +3,168 @@
 <head>
   <meta charset="utf-8">
   <style>
-    body { width: 420px; padding: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; }
-    .header { font-size: 18px; font-weight: 700; color: #60a5fa; margin-bottom: 4px; }
-    .subheader { font-size: 11px; opacity: 0.75; margin-bottom: 12px; }
-    .status-bar { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-weight: 600; text-align: center; }
-    .status-ok { color: #4ade80; border-color: #22c55e; }
-    .status-warmup { color: #facc15; border-color: #eab308; }
-    .status-error { color: #f87171; border-color: #ef4444; }
-    .controls { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-    .control-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    .control-row:not(:last-child) { margin-bottom: 10px; }
-    select, button { background: #334155; color: #e2e8f0; border: 1px solid #64748b; border-radius: 6px; padding: 6px 10px; font-weight: 600; cursor: pointer; }
-    .control-row > button { flex-grow: 1; }
-    button.primary { background: #3b82f6; border-color: #2563eb; color: #fff; }
-    button.danger { background: #ef4444; border-color: #b91c1c; color: #fff; }
-    .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-    .metric { padding: 10px; background: #1e293b; border-radius: 8px; border: 1px solid #334155; }
-    .metric-label { font-size: 11px; opacity: 0.7; }
-    .metric-value { font-size: 18px; font-weight: 700; margin-top: 4px; }
-    .last-signal { margin-top: 12px; padding: 12px; border-radius: 8px; background: #111827; border: 1px solid #1f2937; }
-    .footer-info { text-align: center; font-size: 11px; opacity: 0.6; margin-top: 14px; }
+    :root {
+      --bg: #030712;
+      --card: #111827;
+      --accent: #3b82f6;
+      --nexus: #8b5cf6;
+      --text: #f9fafb;
+      --dim: #9ca3af;
+      --success: #10b981;
+      --danger: #ef4444;
+    }
+    body {
+      width: 440px;
+      padding: 0;
+      margin: 0;
+      font-family: 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow-x: hidden;
+    }
+    .nexus-header {
+      background: linear-gradient(90deg, #1e1b4b 0%, #312e81 100%);
+      padding: 20px;
+      border-bottom: 1px solid var(--nexus);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .nexus-title { font-size: 20px; font-weight: 800; letter-spacing: 1px; color: #fff; text-shadow: 0 0 10px var(--nexus); }
+    .nexus-ver { font-size: 10px; opacity: 0.6; }
     
-    /* Multi-pair prices section */
-    .pairs-section { margin-top: 12px; }
-    .pairs-header { font-weight: 700; margin-bottom: 8px; color: #60a5fa; font-size: 14px; }
-    .pairs-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
-    .pair-card { background: #1e293b; border: 1px solid #334155; border-radius: 6px; padding: 8px 10px; }
-    .pair-card.frozen { border-color: #f87171; background: #3d1a1a; }
-    .pair-card.low-payout { opacity: 0.6; border-color: #64748b; }
-    .pair-name { font-size: 11px; color: #94a3b8; font-weight: 600; }
-    .pair-price { font-size: 14px; font-weight: 700; color: #e2e8f0; margin-top: 2px; }
-    .pair-status { font-size: 9px; color: #64748b; margin-top: 2px; }
-    .pair-status.ready { color: #4ade80; }
-    .pair-status.warmup { color: #facc15; }
-    .pair-status.no-data { color: #f87171; font-weight: 700; }
-    .payout-eligible { color: #4ade80; font-weight: 700; }
-    .payout-low { color: #f87171; font-weight: 400; }
+    .main-container { padding: 16px; }
+
+    .ai-status-card {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 14px;
+      border: 1px solid #1f2937;
+      margin-bottom: 16px;
+      position: relative;
+      overflow: hidden;
+    }
+    .ai-status-card::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; width: 4px; height: 100%;
+      background: var(--nexus);
+    }
+    .status-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; }
+    .intelligence-bar {
+      height: 6px; background: #1f2937; border-radius: 3px; overflow: hidden; margin-top: 4px;
+    }
+    .intelligence-fill {
+      height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--nexus));
+      transition: width 1s ease-in-out;
+    }
+
+    .grid-nodes {
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 16px;
+    }
+    .node-card {
+      background: #1f2937; border-radius: 8px; padding: 10px; border: 1px solid #374151;
+      transition: all 0.2s;
+    }
+    .node-card:hover { border-color: var(--nexus); box-shadow: 0 0 8px rgba(139, 92, 246, 0.2); }
+    .node-name { font-size: 12px; font-weight: 700; color: var(--dim); display: flex; justify-content: space-between; }
+    .node-price { font-size: 16px; font-weight: 800; margin: 4px 0; color: #fff; }
+    .node-meta { font-size: 10px; display: flex; gap: 8px; align-items: center; }
+    .synapse-act { color: var(--nexus); font-weight: bold; }
+
+    .controls-panel {
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px;
+    }
+    .ctrl-box { background: #111827; padding: 10px; border-radius: 8px; border: 1px solid #1f2937; }
+    .ctrl-label { font-size: 10px; color: var(--dim); margin-bottom: 6px; text-transform: uppercase; }
+    select {
+      width: 100%; background: #030712; color: #fff; border: 1px solid #374151;
+      padding: 6px; border-radius: 4px; font-size: 12px; cursor: pointer;
+    }
+
+    .last-decision {
+      background: #0f172a; border: 1px dashed var(--nexus); border-radius: 12px; padding: 14px;
+      margin-top: 16px;
+    }
+    .decision-header { font-size: 11px; color: var(--nexus); font-weight: bold; margin-bottom: 8px; text-transform: uppercase; }
+    .decision-content { font-size: 13px; font-weight: 600; line-height: 1.5; }
+
+    .footer {
+      margin-top: 20px; padding: 12px; font-size: 10px; text-align: center; border-top: 1px solid #1f2937; color: var(--dim);
+    }
+    .pulse { animation: pulse 2s infinite; }
+    @keyframes pulse {
+      0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; }
+    }
   </style>
 </head>
 <body>
-    <div class="header-title">Pocket Scout Quantum Decider</div>
-    <div class="subheader">v20.0 | Global Forced Ranking + Quantum SPI</div>
-
-  <div id="status" class="status-bar status-warmup">...</div>
-
-  <div class="controls">
-    <div class="control-row">
-      <span>Next Signal In</span>
-      <span id="countdownDisplay" style="font-family: monospace; font-size: 16px; font-weight: 700; color: #60a5fa;">00:00</span>
+  <div class="nexus-header">
+    <div>
+      <div class="nexus-title">PROJECT <span style="color:var(--nexus)">NEXUS</span></div>
+      <div class="nexus-ver">Neural Engine v24.0.0 Online</div>
     </div>
-    <div class="control-row">
-      <span>Signal Interval</span>
-      <select id="signalInterval">
-        <option value="1">1 minute</option>
-        <option value="2">2 minutes</option>
-        <option value="3">3 minutes</option>
-        <option value="5">5 minutes</option>
-      </select>
-    </div>
-    <div class="control-row">
-      <span>Trade Duration</span>
-      <select id="tradeDuration">
-        <option value="1">1 minute</option>
-        <option value="2">2 minutes</option>
-        <option value="3">3 minutes</option>
-        <option value="5">5 minutes</option>
-      </select>
-    </div>
-    <div class="control-row">
-      <span>Warmup Period</span>
-      <select id="warmupCandles">
-        <option value="25">25 candles (Fast)</option>
-        <option value="35">35 candles</option>
-        <option value="50" selected>50 candles (Stable)</option>
-      </select>
-    </div>
-    <div class="control-row">
-        <button id="exportLogs" class="primary">Export Logs</button>
-        <button id="resetHistory" class="danger">Reset Stats</button>
-    </div>
+    <div id="global-countdown" style="font-family:monospace; font-size:18px; font-weight:bold; color:var(--nexus);">00:00</div>
   </div>
 
-  <div class="metrics" id="metrics"></div>
-  
-  <div class="pairs-section">
-    <div class="pairs-header">📊 Currency Pairs (10)</div>
-    <div class="pairs-grid" id="pairsGrid">
-      <!-- Pairs will be dynamically inserted here -->
+  <div class="main-container">
+    <div class="ai-status-card">
+      <div class="status-row">
+        <span>NEXUS CORE INTELLIGENCE</span>
+        <span id="intel-pct">0%</span>
+      </div>
+      <div class="intelligence-bar"><div id="intel-fill" class="intelligence-fill"></div></div>
+      <div style="margin-top:10px; display:flex; justify-content:space-between; font-size:11px;">
+        <div style="color:var(--success)">Signals: <span id="stat-total">0</span></div>
+        <div style="color:var(--dim)">WR: <span id="stat-wr">--%</span></div>
+        <div style="color:var(--dim)">Cycles: <span id="stat-cycles">0</span></div>
+      </div>
+    </div>
+
+    <div class="controls-panel">
+      <div class="ctrl-box">
+        <div class="ctrl-label">Synapse Interval</div>
+        <select id="signalInterval">
+          <option value="1">1 MINUTE</option>
+          <option value="2">2 MINUTES</option>
+          <option value="3">3 MINUTES</option>
+          <option value="5">5 MINUTES</option>
+        </select>
+      </div>
+      <div class="ctrl-box">
+        <div class="ctrl-label">Execution Time</div>
+        <select id="tradeDuration">
+          <option value="1">1 MINUTE</option>
+          <option value="2">2 MINUTES</option>
+          <option value="3">3 MINUTES</option>
+          <option value="5">5 MINUTES</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div style="font-size:12px; font-weight:bold; color:var(--dim);">NEURAL NODES (10)</div>
+      <div id="nexus-status-pill" style="font-size:9px; background:var(--success); color:#000; padding:2px 6px; border-radius:10px; font-weight:bold;">READY</div>
+    </div>
+
+    <div class="grid-nodes" id="pairsGrid">
+      <!-- Dynamic Nodes -->
+    </div>
+
+    <div class="last-decision">
+      <div class="decision-header">Recent Consensus Decision</div>
+      <div id="lastSignalContent" class="decision-content">Analyzing market synapses...</div>
+    </div>
+
+    <div style="margin-top:12px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+        <button id="resetHistory" style="background:#1f2937; border:1px solid #374151; color:#f87171; padding:8px; border-radius:6px; font-size:11px; cursor:pointer; font-weight:700;">PURGE MEMORY</button>
+        <button id="exportLogs" style="background:#1f2937; border:1px solid #374151; color:var(--dim); padding:8px; border-radius:6px; font-size:11px; cursor:pointer;">EXPORT DATA</button>
+    </div>
+
+    <div class="footer">
+      SMC PRO • NEURAL FEEDBACK • FRACTAL X-RAY
     </div>
   </div>
-  
-  <div class="last-signal" id="lastSignal">
-    <div style="font-weight:700; margin-bottom:4px;">Last Signal</div>
-    <div id="lastSignalContent" style="opacity:0.8;">Waiting...</div>
-  </div>
-  <div id="pairsInfo" class="footer-info">Active Pairs: 0 / Ready: 0</div>
-  <div id="highConfStats" class="footer-info" style="margin-top: 4px; font-weight: 600; color: #4ade80;">≥70% Conf: 0 signals | WR: --</div>
 
   <script src="popup.js"></script>
 </body>

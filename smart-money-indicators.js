@@ -932,6 +932,25 @@ window.SmartMoneyIndicators = (function() {
       return 'MEAN_REVERTING';
   }
 
+  /**
+   * Micro-Fractal Fingerprint (v24)
+   * Detects complex 3-5 candle sequences
+   */
+  function getMicroFractal(candles) {
+      if (candles.length < 5) return null;
+      const last = candles[candles.length - 1];
+      const p1 = candles[candles.length - 2];
+
+      const isHammer = (last.l < Math.min(last.o, last.c)) && (Math.abs(last.o - last.c) < (last.h - last.l) * 0.3);
+      const isRailroad = Math.abs(last.c - last.o) > 0 && Math.abs(p1.c - p1.o) > 0 &&
+                         Math.sign(last.c - last.o) !== Math.sign(p1.c - p1.o) &&
+                         Math.abs(Math.abs(last.c - last.o) - Math.abs(p1.c - p1.o)) < 0.2;
+
+      if (isHammer && last.c > last.o) return 'BULLISH_RECOVERY';
+      if (isRailroad) return 'VOLATILITY_TRAP';
+      return 'NEUTRAL';
+  }
+
   function analyzeSmartMoney(candles, pair) {
     if (!candles || candles.length < 25) {
       return null;
@@ -1007,6 +1026,7 @@ window.SmartMoneyIndicators = (function() {
       velocityDelta: calculateVelocityDelta(candles),
       displacement: detectDisplacement(candles),
       regime: detectMarketRegime(candles),
+      microFractal: getMicroFractal(candles),
       rsi: tech.calculateRSI(candles.map(c => c.c), 14).slice(-1)[0],
       bb: tech.calculateBollingerBands(candles.map(c => c.c), 20, 2)
     };

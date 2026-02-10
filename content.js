@@ -12,7 +12,7 @@
 (function() {
   'use strict';
 
-  const VERSION = '23.0.0';
+  const VERSION = '24.0.0 (NEXUS AI)';
   const FEED_KEY = 'PS_AT_FEED';
   const DATASTREAM_FEED_KEY = 'POCKET_DATASTREAM_FEED';
   const HISTORY_LIMIT = 50;
@@ -517,12 +517,15 @@
   }
 
   /**
-   * generateForcedBestSignal (v20)
-   * Collects all pairs and forces the engine to pick the absolute winner.
+   * generateForcedBestSignal (NEXUS v24)
+   * Global Consensus Voting Engine
    */
   function generateForcedBestSignal() {
-    const engine = window.V20Engine;
-    if (!engine || !engine.processMarketSnapshot) return;
+    const engine = window.ProjectNexus;
+    if (!engine || !engine.processMarketSnapshot) {
+        console.error("[NEXUS] Engine not loaded properly.");
+        return;
+    }
 
     readPayoutsFromDOM();
     const globalStrength = calculateGlobalCurrencyStrength();
@@ -540,7 +543,7 @@
 
     const result = engine.processMarketSnapshot(allPairsData, tradeDurationMinutes, globalStrength);
 
-    // Update all pair states regardless of whether a signal was generated (v21 sync)
+    // Synchronize Neural States (SPI is now Nexus Score)
     if (result && result.allUpdatedStates) {
         for (const pair in result.allUpdatedStates) {
             pairEngineStates[pair] = result.allUpdatedStates[pair];
@@ -550,33 +553,24 @@
     if (result && result.pair) {
       const winner = result;
 
-      // v20.1 Loss Streak Protection (Probe Logic)
+      // Streak Protection (v20.1 legacy maintained)
       let finalConfidence = 100;
-      let extraReasons = [];
-      if (consecutiveLossesCount >= 3) {
-          finalConfidence = 60;
-          extraReasons.push(`Loss Streak Protection (${consecutiveLossesCount} losses)`);
-          console.warn(`[PS v20.1] 🛡️ Streak protection active: Limiting confidence to 60% after ${consecutiveLossesCount} losses.`);
-      }
+      if (consecutiveLossesCount >= 3) finalConfidence = 60;
 
-      console.log(`[PS v23.0] 🏆 Singularity: ${winner.pair} | SPI: ${winner.indicatorValues.spi} | Mode: ${winner.indicatorValues.isInverted ? 'INVERTED' : 'NORMAL'}`);
+      console.log(`[NEXUS AI] 🧠 Decision: ${winner.pair} | Score: ${winner.indicatorValues.spi} | Cycles: ${winner.indicatorValues.cycles}`);
 
       const cleanSignal = {
         pair: winner.pair,
         action: winner.action,
         confidence: finalConfidence,
         duration: winner.tradeDuration,
-        durationReason: winner.durationReason,
-        reasons: [...winner.reasons, ...extraReasons],
+        reasons: winner.reasons,
         timestamp: Date.now(),
         entryPrice: pairLastPrices[winner.pair],
-        result: null
+        result: null,
+        // Neural Metadata
+        nexusFeatures: pairEngineStates[winner.pair]?.nexus?.lastFeatures
       };
-
-      // Persist state update from engine (winner gets resetState)
-      if (winner.updatedState) {
-          pairEngineStates[winner.pair] = winner.updatedState;
-      }
 
       recordSignal(winner.pair, cleanSignal);
     }
@@ -712,6 +706,13 @@
     signal.result = isWin ? 'WIN' : 'LOSS';
     signal.exitPrice = lastPrice;
     
+    // NEXUS AI: Feedback Learning
+    const engine = window.ProjectNexus;
+    if (engine && engine.train && signal.nexusFeatures && pairEngineStates[pair]) {
+        console.log(`[NEXUS AI] 📚 Learning from ${pair} outcome: ${signal.result}`);
+        engine.train(pairEngineStates[pair], signal.result, signal.nexusFeatures);
+    }
+
     if (isWin) {
         winningSignals++;
         consecutiveLossesCount = 0; // Reset streak on win
@@ -771,7 +772,8 @@
         payout: payout,
         payoutEligible: payout >= MIN_PAYOUT_PERCENT,
         isHot: !!(pairEngineStates[pair]?.deepSight?.winRate >= 80 && pairEngineStates[pair]?.deepSight?.virtualHistory?.length >= 3),
-        spi: pairEngineStates[pair]?.deepSight?.lastSPI || 0
+        spi: pairEngineStates[pair]?.deepSight?.lastSPI || 0,
+        cycles: pairEngineStates[pair]?.nexus?.trainingCycles || 0
       };
     }
     
@@ -898,8 +900,8 @@
             updateCandlesForPair(pair, price, now);
           }
 
-          // Sync Oracle (Deep Sight) on every tick for real-time intelligence (v20)
-          const engine = window.V20Engine || window.V19Engine;
+          // NEXUS AI: Synapse Sync & Shadow Learning
+          const engine = window.ProjectNexus;
           if (engine && engine.syncOracle) {
             pairEngineStates[pair] = engine.syncOracle(pair, pairEngineStates[pair], price);
           }
