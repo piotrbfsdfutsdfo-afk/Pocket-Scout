@@ -909,11 +909,35 @@ window.SmartMoneyIndicators = (function() {
       return null;
   }
 
+  /**
+   * Market Regime Detection (v23)
+   * TRENDING: EMAs stacked, RSI aligned.
+   * RANGING: BBands flat, RSI osciallating.
+   */
+  function detectMarketRegime(candles) {
+      if (candles.length < 20) return 'UNKNOWN';
+      const tech = window.TechnicalIndicators;
+      const prices = candles.map(c => c.c);
+
+      const ema5 = tech.calculateEMA(prices, 5).slice(-1)[0];
+      const ema20 = tech.calculateEMA(prices, 20).slice(-1)[0];
+      const bb = tech.calculateBollingerBands(prices, 20, 2);
+
+      const bbWidth = (bb.upper.slice(-1)[0] - bb.lower.slice(-1)[0]) / bb.middle.slice(-1)[0];
+      const isTrending = Math.abs(ema5 - ema20) / ema20 > 0.0005; // 0.05% separation
+      const isSqueezed = bbWidth < 0.001; // Squeeze condition
+
+      if (isSqueezed) return 'CONTRACTION';
+      if (isTrending) return 'TRENDING';
+      return 'MEAN_REVERTING';
+  }
+
   function analyzeSmartMoney(candles, pair) {
-    if (!candles || candles.length < 20) {
+    if (!candles || candles.length < 25) {
       return null;
     }
 
+    const tech = window.TechnicalIndicators;
     const pip = getPipSize(pair);
 
     const marketStructure = detectMarketStructure(candles);
@@ -981,7 +1005,10 @@ window.SmartMoneyIndicators = (function() {
       ote,
       marketPhase: detectMarketPhase(candles),
       velocityDelta: calculateVelocityDelta(candles),
-      displacement: detectDisplacement(candles)
+      displacement: detectDisplacement(candles),
+      regime: detectMarketRegime(candles),
+      rsi: tech.calculateRSI(candles.map(c => c.c), 14).slice(-1)[0],
+      bb: tech.calculateBollingerBands(candles.map(c => c.c), 20, 2)
     };
   }
 

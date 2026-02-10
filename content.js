@@ -12,7 +12,7 @@
 (function() {
   'use strict';
 
-  const VERSION = '22.0.0';
+  const VERSION = '23.0.0';
   const FEED_KEY = 'PS_AT_FEED';
   const DATASTREAM_FEED_KEY = 'POCKET_DATASTREAM_FEED';
   const HISTORY_LIMIT = 50;
@@ -559,7 +559,7 @@
           console.warn(`[PS v20.1] 🛡️ Streak protection active: Limiting confidence to 60% after ${consecutiveLossesCount} losses.`);
       }
 
-      console.log(`[PS v21.1] 🚀 Force Winner: ${winner.pair} | SPI: ${winner.indicatorValues.spi} | CONF: ${finalConfidence}%`);
+      console.log(`[PS v23.0] 🏆 Singularity: ${winner.pair} | SPI: ${winner.indicatorValues.spi} | Mode: ${winner.indicatorValues.isInverted ? 'INVERTED' : 'NORMAL'}`);
 
       const cleanSignal = {
         pair: winner.pair,
