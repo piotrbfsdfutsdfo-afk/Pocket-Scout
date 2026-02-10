@@ -113,39 +113,57 @@ window.V20Engine = (function(indicators) {
   }
 
   /**
-   * SPI: Success Probability Index (v21 Masterful Edition)
+   * SPI: Success Probability Index (v22 Flux Master Edition)
    * A unified scoring system for comparative pair analysis.
    */
-  function calculateSPI(pair, pairState, smcData, candles) {
+  function calculateSPI(pair, pairState, smcData, candles, flux = 0, globalStrength = null) {
     let score = 0;
     const lastCandle = candles[candles.length - 1];
 
-    // 1. Deep Sight Master Reliability (40 pts)
+    // 1. Deep Sight Master Reliability (30 pts)
     // Weighted by virtual history length - need proof of consistency
     const ds = pairState?.deepSight;
     const dsWinRate = ds ? (ds.winRate || 0) : 0;
-    const consistencyBonus = ds && ds.virtualHistory.length >= 5 ? 10 : 0;
-    score += (dsWinRate / 100) * 30 + consistencyBonus;
+    const consistencyBonus = ds && ds.virtualHistory.length >= 5 ? 5 : 0;
+    score += (dsWinRate / 100) * 25 + consistencyBonus;
 
-    // 2. Institutional SMC Evidence (30 pts)
+    // 2. Institutional Flux & Displacement (30 pts) - v22 New Core
+    // High tick density = institutional involvement
+    const fluxBonus = Math.min(15, flux * 10); // cap at 15 pts
+    score += fluxBonus;
+
+    // Displacement check: body size > 2x average of last 10
+    const bodySize = Math.abs(lastCandle.c - lastCandle.o);
+    const avgBody = candles.slice(-11, -1).reduce((s, c) => s + Math.abs(c.c - c.o), 0) / 10;
+    if (bodySize > avgBody * 1.8) score += 15;
+
+    // 3. Global Strength Correlation (20 pts) - v22 New Core
+    if (globalStrength) {
+        const parts = pair.replace('_OTC', '').split('/');
+        if (parts.length === 2) {
+            const baseS = globalStrength[parts[0]] || 0;
+            const quoteS = globalStrength[parts[1]] || 0;
+            const netStrength = baseS - quoteS;
+            // If setup is BUY and Base is stronger than Quote
+            const setupDir = smcData.marketStructure.m15Trend;
+            if ((setupDir === 'BULLISH' && netStrength > 0) || (setupDir === 'BEARISH' && netStrength < 0)) {
+                score += 20;
+            } else if (netStrength !== 0) {
+                score += 10; // partial alignment
+            }
+        }
+    }
+
+    // 4. Institutional SMC Evidence (20 pts)
     const sweeps = smcData.liquidity.sweeps;
     const hasSweep = (sweeps.bullishSweeps.length > 0 || sweeps.bearishSweeps.length > 0);
-    if (hasSweep) score += 15;
+    if (hasSweep) score += 10;
 
     const unmitigatedOB = (smcData.orderBlocks.bullishOB.some(ob => !ob.mitigated) ||
                           smcData.orderBlocks.bearishOB.some(ob => !ob.mitigated));
     if (unmitigatedOB) score += 10;
 
-    const pa = smcIndicators.detectPriceActionPatterns(candles);
-    if (pa.pinBar || pa.engulfing) score += 5;
-
-    // 3. Momentum & Trend Confluence (20 pts)
-    const vDelta = smcData.velocityDelta;
-    const trend = smcData.marketStructure.m15Trend;
-    if (vDelta.aligned !== 'NONE') score += 10;
-    if (trend !== 'NEUTRAL') score += 10;
-
-    // 4. Zonal Precision & Volatility (10 pts)
+    // 5. Zonal Precision & Volatility (0 pts - moved to filters)
     const zone = smcData.premiumDiscount?.currentZone;
     const atr = smcIndicators.calculateATR(candles, 14);
     if (zone === 'DISCOUNT' || zone === 'PREMIUM') score += 5;
@@ -155,17 +173,17 @@ window.V20Engine = (function(indicators) {
   }
 
   /**
-   * processMarketSnapshot (v21 Masterful Edition)
-   * Global analyzer with strict SPI floor and structural requirements.
+   * processMarketSnapshot (v22 Flux Master Edition)
+   * Global analyzer with Flux Intelligence and Global Correlation.
    */
-  function processMarketSnapshot(allPairsData, forcedDuration = 5) {
+  function processMarketSnapshot(allPairsData, forcedDuration = 5, globalStrength = null) {
     const pairs = Object.keys(allPairsData);
     if (pairs.length === 0) return null;
 
     const rankings = [];
 
     pairs.forEach(pair => {
-      let { candles, pairState } = allPairsData[pair];
+      let { candles, pairState, flux } = allPairsData[pair];
 
       // Initialize state if missing (v20 defensive)
       if (!pairState || !pairState.deepSight) {
@@ -175,7 +193,7 @@ window.V20Engine = (function(indicators) {
       const smcData = smcIndicators.analyzeSmartMoney(candles, pair);
       if (!smcData) return;
 
-      const spi = calculateSPI(pair, pairState, smcData, candles);
+      const spi = calculateSPI(pair, pairState, smcData, candles, flux, globalStrength);
       pairState.deepSight.lastSPI = spi;
 
       // Determine Direction based on Multi-Layer Fallback (v21.1 Forced Signal)
@@ -223,7 +241,7 @@ window.V20Engine = (function(indicators) {
     }
 
     // High Quality Winner
-    console.log(`[PS v21.1] 🏆 Force Winner: ${winner.pair} | SPI: ${winner.spi} | CONF: 100%`);
+    console.log(`[PS v22.0] 🏆 Flux Winner: ${winner.pair} | SPI: ${winner.spi} | CONF: 100%`);
 
     const signal = {
         pair: winner.pair,
@@ -381,7 +399,7 @@ window.V20Engine = (function(indicators) {
     };
   }
 
-  console.log('[Pocket Scout v20.0] Quantum Decider Engine loaded');
+  console.log('[Pocket Scout v22.0] Flux Master Engine loaded');
   return { generateSignal, syncOracle, processMarketSnapshot };
 
 })(window.TechnicalIndicators);

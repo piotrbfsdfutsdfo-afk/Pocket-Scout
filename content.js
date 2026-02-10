@@ -12,7 +12,7 @@
 (function() {
   'use strict';
 
-  const VERSION = '21.1.0';
+  const VERSION = '22.0.0';
   const FEED_KEY = 'PS_AT_FEED';
   const DATASTREAM_FEED_KEY = 'POCKET_DATASTREAM_FEED';
   const HISTORY_LIMIT = 50;
@@ -42,6 +42,9 @@
   const pairLastPriceUpdate = {};
   // Map of pair -> frozen status
   const pairFrozenStatus = {};
+  // Flux tracking (updates per second)
+  const pairFluxCounters = {};
+  const pairFluxLevels = {};
   // Threshold in milliseconds to consider a price frozen (10 seconds)
   const FREEZE_THRESHOLD_MS = 10000;
   // Cooldown period after switching chart (60 seconds to prevent spam)
@@ -481,6 +484,39 @@
   }
 
   /**
+   * Calculate Global Currency Strength (v22)
+   */
+  function calculateGlobalCurrencyStrength() {
+      const strength = {};
+      const majorCurrencies = ['EUR', 'USD', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD'];
+      majorCurrencies.forEach(c => strength[c] = 0);
+
+      for (const pair of Object.keys(pairOhlcM1)) {
+          const candles = pairOhlcM1[pair];
+          if (candles.length < 5) continue;
+
+          // Use last 5 candles for strength context
+          const last = candles[candles.length - 1];
+          const prev = candles[candles.length - 6] || candles[0];
+          const move = last.c - prev.c;
+
+          // e.g. "EUR/USD_OTC" -> ["EUR", "USD"]
+          const parts = pair.replace('_OTC', '').split('/');
+          if (parts.length !== 2) continue;
+
+          const base = parts[0], quote = parts[1];
+          if (move > 0) {
+              if (strength[base] !== undefined) strength[base]++;
+              if (strength[quote] !== undefined) strength[quote]--;
+          } else if (move < 0) {
+              if (strength[base] !== undefined) strength[base]--;
+              if (strength[quote] !== undefined) strength[quote]++;
+          }
+      }
+      return strength;
+  }
+
+  /**
    * generateForcedBestSignal (v20)
    * Collects all pairs and forces the engine to pick the absolute winner.
    */
@@ -489,18 +525,20 @@
     if (!engine || !engine.processMarketSnapshot) return;
 
     readPayoutsFromDOM();
+    const globalStrength = calculateGlobalCurrencyStrength();
     const allPairsData = {};
 
     for (const pair of Object.keys(pairWarmupComplete)) {
       if (pairWarmupComplete[pair] && hasSufficientPayout(pair)) {
         allPairsData[pair] = {
           candles: [...(pairOhlcM1[pair] || [])],
-          pairState: pairEngineStates[pair] || {}
+          pairState: pairEngineStates[pair] || {},
+          flux: pairFluxLevels[pair] || 0
         };
       }
     }
 
-    const result = engine.processMarketSnapshot(allPairsData, tradeDurationMinutes);
+    const result = engine.processMarketSnapshot(allPairsData, tradeDurationMinutes, globalStrength);
 
     // Update all pair states regardless of whether a signal was generated (v21 sync)
     if (result && result.allUpdatedStates) {
@@ -831,6 +869,13 @@
       for (const [pair, price] of Object.entries(prices)) {
         if (typeof price === 'number' && price > 0) {
           const previousPrice = pairLastPrices[pair];
+
+          // Flux tracking (v22)
+          if (!pairFluxCounters[pair]) pairFluxCounters[pair] = 0;
+          if (previousPrice !== price) {
+              pairFluxCounters[pair]++;
+          }
+
           const buffer = getOrCreateBuffer(pair);
           const lastCandle = buffer.getLatest();
           const isNewMinute = !lastCandle || lastCandle.t !== currentMinute;
@@ -883,7 +928,16 @@
     }
   }
 
-  setInterval(tickLoop, 1500);
+  setInterval(tickLoop, 500); // Higher resolution for v22 Flux
+
+  // v22 Flux Calculation (Sliding window every 5s)
+  setInterval(() => {
+    for (const pair in pairFluxCounters) {
+        pairFluxLevels[pair] = pairFluxCounters[pair] / 5; // average ticks/sec
+        pairFluxCounters[pair] = 0;
+    }
+  }, 5000);
+
   // Changed from 10000ms to 1000ms for real-time response with clock sync
   setInterval(signalLoop, 1000);
   // NEW: Automatic chart rotation every 10 seconds to prevent price freezing

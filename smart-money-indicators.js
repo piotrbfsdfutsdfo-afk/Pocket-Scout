@@ -893,6 +893,22 @@ window.SmartMoneyIndicators = (function() {
     return result;
   }
 
+  /**
+   * Institutional Displacement (v22)
+   * High-momentum move with significant body size
+   */
+  function detectDisplacement(candles) {
+      if (candles.length < 5) return null;
+      const last = candles[candles.length - 1];
+      const avgBody = candles.slice(-6, -1).reduce((s, c) => s + Math.abs(c.c - c.o), 0) / 5;
+      const currentBody = Math.abs(last.c - last.o);
+
+      if (currentBody > avgBody * 2.2) {
+          return { type: last.c > last.o ? 'BULLISH' : 'BEARISH', magnitude: currentBody / avgBody };
+      }
+      return null;
+  }
+
   function analyzeSmartMoney(candles, pair) {
     if (!candles || candles.length < 20) {
       return null;
@@ -964,7 +980,8 @@ window.SmartMoneyIndicators = (function() {
       premiumDiscount,
       ote,
       marketPhase: detectMarketPhase(candles),
-      velocityDelta: calculateVelocityDelta(candles)
+      velocityDelta: calculateVelocityDelta(candles),
+      displacement: detectDisplacement(candles)
     };
   }
 
