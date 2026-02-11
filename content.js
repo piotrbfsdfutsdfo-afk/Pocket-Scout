@@ -452,38 +452,6 @@
   }
 
   /**
-   * Generate signal candidate for a specific pair (does NOT record - just returns the signal)
-   */
-  function generateSignalCandidateForPair(pair) {
-    if (!pairWarmupComplete[pair]) return null;
-    const engine = window.V20Engine || window.V19Engine;
-    if (!engine) return null;
-    
-    const ohlcM1 = pairOhlcM1[pair] || [];
-    if (ohlcM1.length < warmupCandlesCount) return null;
-
-    const engineOutput = engine.generateSignal([...ohlcM1], pair, pairEngineStates[pair]);
-
-    let signal = engineOutput?.signal || engineOutput;
-    if (engineOutput?.updatedState) pairEngineStates[pair] = engineOutput.updatedState;
-
-    if (!signal) return null;
-
-    return { 
-      pair: pair,
-      action: signal.action,
-      confidence: signal.confidence,
-      duration: signal.tradeDuration || signal.duration,
-      durationReason: signal.durationReason,
-      reasons: signal.reasons,
-      timestamp: Date.now(), 
-      entryPrice: pairLastPrices[pair],
-      result: null,
-      indicatorValues: signal.indicatorValues
-    };
-  }
-
-  /**
    * Calculate Global Currency Strength (v22)
    */
   function calculateGlobalCurrencyStrength() {
@@ -553,17 +521,22 @@
     if (result && result.pair) {
       const winner = result;
 
-      // Streak Protection (v20.1 legacy maintained)
-      let finalConfidence = 100;
-      if (consecutiveLossesCount >= 3) finalConfidence = 60;
+      // Nexus Score to Confidence mapping
+      const spi = winner.indicatorValues.spi || 0;
+      let finalConfidence = Math.min(100, Math.max(0, spi));
 
-      console.log(`[NEXUS AI] 🧠 Decision: ${winner.pair} | Score: ${winner.indicatorValues.spi} | Cycles: ${winner.indicatorValues.cycles}`);
+      // Streak Protection (v20.1 legacy maintained)
+      if (consecutiveLossesCount >= 3) {
+          finalConfidence = Math.min(60, finalConfidence);
+      }
+
+      console.log(`[NEXUS AI] 🧠 Decision: ${winner.pair} | Score: ${spi} | Confidence: ${finalConfidence}% | Cycles: ${winner.indicatorValues.cycles}`);
 
       const cleanSignal = {
         pair: winner.pair,
         action: winner.action,
         confidence: finalConfidence,
-        duration: winner.tradeDuration,
+        duration: Math.floor(winner.tradeDuration),
         reasons: winner.reasons,
         timestamp: Date.now(),
         entryPrice: pairLastPrices[winner.pair],
@@ -576,84 +549,6 @@
     }
   }
 
-  /**
-   * Generate signals for ALL pairs and select the ONE with highest confidence
-   * OPTIMIZED: Filters by payout >= 80% and avoids low WR trends (STRONGLY_BEARISH, NEUTRAL)
-   */
-  function generateBestSignalAcrossAllPairs() {
-    // First, update payouts from DOM
-    readPayoutsFromDOM();
-    
-    const candidates = [];
-    
-    // Generate signal candidates from all pairs that are ready
-    for (const pair of Object.keys(pairWarmupComplete)) {
-      if (pairWarmupComplete[pair]) {
-        // PAYOUT FILTER: Only consider pairs with payout >= 80%
-        if (!hasSufficientPayout(pair)) {
-          const payout = getPairPayout(pair);
-          if (DEBUG_MODE) console.log(`[PS v${VERSION}] ⛔ Skipping ${pair} - payout ${payout}% < ${MIN_PAYOUT_PERCENT}%`);
-          continue;
-        }
-        
-        const candidate = generateSignalCandidateForPair(pair);
-        if (candidate) {
-          // CONFIDENCE FILTER: Only consider signals with confidence >= MIN_CONFIDENCE_PERCENT
-          if (candidate.confidence < MIN_CONFIDENCE_PERCENT) {
-            if (DEBUG_MODE) console.log(`[PS v${VERSION}] ⛔ Skipping ${pair} - confidence ${candidate.confidence}% < ${MIN_CONFIDENCE_PERCENT}%`);
-            continue;
-          }
-          
-          // NOTE: Trend filtering was removed after comprehensive analysis of 1019 signals
-          // Original filter (STRONGLY_BEARISH, NEUTRAL) was based on small sample (52 signals)
-          // Full dataset shows: NEUTRAL 52.8% WR, STRONGLY_BEARISH 50.4% WR - both acceptable
-          // All trends have WR ≥48% for high-confidence signals, no filtering needed
-          
-          // Wrap candidate with payout info (avoids mutating original candidate object)
-          const payout = getPairPayout(pair);
-          candidates.push({ candidate, payout });
-        }
-      }
-    }
-    
-    if (candidates.length === 0) {
-      if (DEBUG_MODE) console.log(`[PS v${VERSION}] No signal candidates available (after payout/confidence filters).`);
-      return;
-    }
-    
-    // Sort by confidence descending, then by payout descending, then by duration ascending
-    candidates.sort((a, b) => {
-      if (b.candidate.confidence !== a.candidate.confidence) {
-        return b.candidate.confidence - a.candidate.confidence; // Higher confidence first
-      }
-      if (b.payout !== a.payout) {
-        return b.payout - a.payout; // Higher payout as second priority
-      }
-      return a.candidate.duration - b.candidate.duration; // Shorter duration as tiebreaker
-    });
-    
-    // Select the best signal and create a clean copy for recording
-    const { candidate: bestCandidate, payout: bestPayout } = candidates[0];
-    
-    // Log payout information
-    console.log(`[PS v${VERSION}] 💰 Selected signal: ${bestCandidate.pair} | Conf: ${bestCandidate.confidence}% | Payout: ${bestPayout}%`);
-    
-    // Create a clean signal object without indicatorValues and payout (for recording)
-    const cleanSignal = {
-      pair: bestCandidate.pair,
-      action: bestCandidate.action,
-      confidence: bestCandidate.confidence,
-      duration: bestCandidate.duration,
-      durationReason: bestCandidate.durationReason,
-      reasons: bestCandidate.reasons,
-      timestamp: bestCandidate.timestamp,
-      entryPrice: bestCandidate.entryPrice,
-      result: bestCandidate.result
-    };
-    
-    if (DEBUG_MODE) console.log(`[PS v${VERSION}] 🎯 Selected best signal from ${candidates.length} filtered candidates:`);
-    recordSignal(cleanSignal.pair, cleanSignal);
-  }
 
   function recordSignal(pair, signal) {
     pairLastSignals[pair] = signal;
@@ -728,24 +623,7 @@
     saveState();
   }
   
-  /**
-   * Check if at least one pair is ready for signal generation
-   */
-  function isAnyPairReady() {
-    return Object.values(pairWarmupComplete).some(ready => ready);
-  }
 
-  /**
-   * Maybe generate best signal (uses global timer, not per-pair)
-   */
-  function maybeGenerateBestSignal() {
-    if (!isAnyPairReady()) return;
-    const now = Date.now();
-    if (now >= globalNextSignalAt) {
-      globalNextSignalAt = now + signalIntervalMinutes * 60 * 1000;
-      generateBestSignalAcrossAllPairs();
-    }
-  }
 
   // --- Get multi-pair status for popup ---
   function getMultiPairStatus() {

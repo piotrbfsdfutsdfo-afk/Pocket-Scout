@@ -49,7 +49,7 @@ document.addEventListener('DOMContentLoaded', function() {
         else countdownEl.classList.remove('pulse');
     }
 
-    function renderPairsGrid(pairStatus) {
+    function renderPairsGrid(pairStatus, warmupTarget) {
         if (!pairStatus) return;
         const pairs = Object.keys(pairStatus).sort();
         let html = '';
@@ -61,6 +61,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const cycles = status.cycles || 0;
             const spi = status.spi || 0;
             
+            const warmupText = status.warmupComplete ? 'SYNCS' : `WARMUP ${status.candles}/${warmupTarget}`;
+            const warmupColor = status.warmupComplete ? 'var(--success)' : 'var(--accent)';
+
             html += `
                 <div class="node-card">
                     <div class="node-name">
@@ -69,7 +72,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                     <div class="node-price">${price}</div>
                     <div class="node-meta">
-                        <span style="color:${status.warmupComplete ? 'var(--success)' : 'var(--dim)'}">${status.warmupComplete ? 'SYNCS' : 'WAIT'}</span>
+                        <span style="color:${warmupColor}">${warmupText}</span>
                         <span style="opacity:0.5">${cycles} CYCLES</span>
                     </div>
                 </div>
@@ -101,18 +104,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 intelFillEl.style.width = intelLevel + '%';
                 intelPctEl.textContent = intelLevel + '%';
 
-                renderPairsGrid(pairStatus);
+                renderPairsGrid(pairStatus, metrics.currentWarmup);
 
                 if (lastSignal) {
                     const time = new Date(lastSignal.timestamp).toLocaleTimeString();
                     const actionColor = lastSignal.action === 'BUY' ? 'var(--success)' : 'var(--danger)';
                     const resTag = lastSignal.result ? `[${lastSignal.result}]` : '[LIVE]';
+                    const conf = lastSignal.confidence || 0;
+                    const dur = lastSignal.duration || 0;
 
                     lastSignalContentEl.innerHTML = `
                         <span style="color:var(--dim)">${lastSignal.pair.replace('_OTC','')}</span>
                         <span style="color:${actionColor}">${lastSignal.action}</span>
                         @ ${formatPrice(lastSignal.entryPrice, lastSignal.pair)}
-                        <br/><span style="font-size:10px; opacity:0.7">${lastSignal.reasons[0]} | ${time} ${resTag}</span>
+                        <br/><span style="font-size:10px; opacity:0.7">CONF: ${conf}% | DUR: ${dur}m | ${time} ${resTag}</span>
                     `;
                 }
 
