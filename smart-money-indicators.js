@@ -103,8 +103,8 @@ window.SmartMoneyIndicators = (function() {
 
   /**
    * Detect Market Structure: BOS (Break of Structure) and CHoCH (Change of Character)
-   * BOS: Price breaks previous swing in same trend direction
-   * CHoCH: Price breaks counter-trend swing (potential reversal)
+   * BOS: Price breaks previous swing in same trend direction (REQUIRES BODY CLOSE)
+   * CHoCH: Price breaks counter-trend swing (potential reversal) (REQUIRES BODY CLOSE)
    */
   function detectMarketStructure(candles) {
     const { swingHighs, swingLows } = findSwingPoints(candles);
@@ -114,15 +114,17 @@ window.SmartMoneyIndicators = (function() {
         trend: 'RANGING',
         lastBOS: null,
         lastCHoCH: null,
-        structure: 'NEUTRAL'
+        structure: 'NEUTRAL',
+        swingHighs,
+        swingLows
       };
     }
 
     const lastCandle = candles[candles.length - 1];
     
     // Analyze recent structure
-    const recentHighs = swingHighs.slice(-3);
-    const recentLows = swingLows.slice(-3);
+    const recentHighs = swingHighs.slice(-4);
+    const recentLows = swingLows.slice(-4);
     
     // Determine trend based on swing structure
     let trend = 'RANGING';
@@ -143,22 +145,26 @@ window.SmartMoneyIndicators = (function() {
       }
     }
 
-    // Detect BOS/CHoCH
+    // Detect BOS/CHoCH - MUST CLOSE WITH BODY
     let lastBOS = null;
     let lastCHoCH = null;
     
+    // Use second to last swing for BOS check if current candle IS a swing point
     const lastSwingHigh = swingHighs[swingHighs.length - 1];
     const lastSwingLow = swingLows[swingLows.length - 1];
     
+    const bodyMax = Math.max(lastCandle.o, lastCandle.c);
+    const bodyMin = Math.min(lastCandle.o, lastCandle.c);
+
     // BOS: Breaking structure in trend direction
-    if (trend === 'BULLISH' && lastCandle.c > lastSwingHigh.price) {
+    if (trend === 'BULLISH' && bodyMax > lastSwingHigh.price) {
       lastBOS = {
         type: 'BULLISH_BOS',
         price: lastSwingHigh.price,
         time: lastCandle.t,
         bqi: calculateBQI(lastCandle, candles.slice(0, -1))
       };
-    } else if (trend === 'BEARISH' && lastCandle.c < lastSwingLow.price) {
+    } else if (trend === 'BEARISH' && bodyMin < lastSwingLow.price) {
       lastBOS = {
         type: 'BEARISH_BOS',
         price: lastSwingLow.price,
@@ -168,14 +174,14 @@ window.SmartMoneyIndicators = (function() {
     }
     
     // CHoCH: Breaking structure against trend (reversal signal)
-    if (trend === 'BULLISH' && lastCandle.c < lastSwingLow.price) {
+    if (trend === 'BULLISH' && bodyMin < lastSwingLow.price) {
       lastCHoCH = {
         type: 'BEARISH_CHoCH',
         price: lastSwingLow.price,
         time: lastCandle.t,
         bqi: calculateBQI(lastCandle, candles.slice(0, -1))
       };
-    } else if (trend === 'BEARISH' && lastCandle.c > lastSwingHigh.price) {
+    } else if (trend === 'BEARISH' && bodyMax > lastSwingHigh.price) {
       lastCHoCH = {
         type: 'BULLISH_CHoCH',
         price: lastSwingHigh.price,
@@ -185,6 +191,38 @@ window.SmartMoneyIndicators = (function() {
     }
 
     return { trend, structure, lastBOS, lastCHoCH, swingHighs, swingLows };
+  }
+
+  /**
+   * Detect SFP (Swing Failure Pattern)
+   * Wick pierces previous swing level but closes back inside.
+   * This is a strong Liquidity Grab / Manipulation signal.
+   */
+  function detectSFP(candles, marketStructure) {
+      if (!marketStructure || !candles || candles.length < 5) return null;
+
+      const lastCandle = candles[candles.length - 1];
+      const { swingHighs, swingLows } = marketStructure;
+
+      if (swingHighs.length === 0 || swingLows.length === 0) return null;
+
+      const lastSwingHigh = swingHighs[swingHighs.length - 1];
+      const lastSwingLow = swingLows[swingLows.length - 1];
+
+      const bodyMax = Math.max(lastCandle.o, lastCandle.c);
+      const bodyMin = Math.min(lastCandle.o, lastCandle.c);
+
+      // Bearish SFP: High pierces last Swing High, but body closes below it.
+      if (lastCandle.h > lastSwingHigh.price && bodyMax < lastSwingHigh.price) {
+          return { type: 'BEARISH_SFP', level: lastSwingHigh.price, strength: (lastCandle.h - lastSwingHigh.price) / (lastCandle.h - lastCandle.l) };
+      }
+
+      // Bullish SFP: Low pierces last Swing Low, but body closes above it.
+      if (lastCandle.l < lastSwingLow.price && bodyMin > lastSwingLow.price) {
+          return { type: 'BULLISH_SFP', level: lastSwingLow.price, strength: (lastSwingLow.price - lastCandle.l) / (lastCandle.h - lastCandle.l) };
+      }
+
+      return null;
   }
 
   /**
@@ -359,19 +397,19 @@ window.SmartMoneyIndicators = (function() {
 
   /**
    * Detect Order Blocks
-   * Last opposite-colored candle before strong impulsive move
+   * Last opposite-colored candle before strong impulsive move (REQUIRES DISPLACEMENT)
    */
-  function detectOrderBlocks(candles, lookback = 10, pip = 0.0001) {
+  function detectOrderBlocks(candles, lookback = 15, pip = 0.0001) {
     if (candles.length < lookback) return { bullishOB: [], bearishOB: [] };
     
     const bullishOB = [];
     const bearishOB = [];
     const recentCandles = candles.slice(-lookback);
     
-    for (let i = 1; i < recentCandles.length - 1; i++) {
-      const prev = recentCandles[i - 1];
+    for (let i = 1; i < recentCandles.length - 2; i++) {
       const current = recentCandles[i];
       const next = recentCandles[i + 1];
+      const next2 = recentCandles[i + 2];
       
       const currentBullish = current.c > current.o;
       const currentBearish = current.c < current.o;
@@ -381,23 +419,29 @@ window.SmartMoneyIndicators = (function() {
       const nextRange = Math.abs(next.c - next.o);
       const currentRange = Math.abs(current.c - current.o);
       
-      // Bullish OB: Bearish candle followed by strong bullish move
-      if (currentBearish && nextBullish && nextRange > currentRange * 1.5) {
+      // DISPLACEMENT check: Next candle body MUST be at least 2x current candle body
+      const displacement = nextRange > currentRange * 2.0;
+
+      // Bullish OB: Bearish candle followed by strong BULLISH move with displacement
+      if (currentBearish && nextBullish && displacement) {
+        // Also check if next2 is bullish or leaves a gap
         bullishOB.push({
           high: current.h,
           low: current.l,
           time: current.t,
-          strength: nextRange / currentRange
+          strength: nextRange / (currentRange || 0.00001),
+          hasFVG: next2.l > current.h // FVG check
         });
       }
       
-      // Bearish OB: Bullish candle followed by strong bearish move
-      if (currentBullish && nextBearish && nextRange > currentRange * 1.5) {
+      // Bearish OB: Bullish candle followed by strong BEARISH move with displacement
+      if (currentBullish && nextBearish && displacement) {
         bearishOB.push({
           high: current.h,
           low: current.l,
           time: current.t,
-          strength: nextRange / currentRange
+          strength: nextRange / (currentRange || 0.00001),
+          hasFVG: next2.h < current.l // FVG check
         });
       }
     }
@@ -996,6 +1040,7 @@ window.SmartMoneyIndicators = (function() {
     };
     
     // New SMC elements
+    const sfp = detectSFP(candles, marketStructure);
     const breakerBlocks = detectBreakerBlocks(candles, orderBlocks, sweeps);
     const mitigationBlocks = detectMitigationBlocks(candles, orderBlocks, sweeps);
     const rejectionBlocks = detectRejectionBlocks(candles);
@@ -1008,11 +1053,15 @@ window.SmartMoneyIndicators = (function() {
       ote = calculateOTE(premiumDiscount.rangeHigh, premiumDiscount.rangeLow);
     }
 
+    const adxData = tech.calculateADX(candles, 14);
+    const stochData = tech.calculateStochastic(candles, 14, 3);
+
     return {
       marketStructure,
       liquidity: {
         equalLevels,
-        sweeps
+        sweeps,
+        sfp
       },
       orderBlocks,
       imbalance,
@@ -1028,7 +1077,9 @@ window.SmartMoneyIndicators = (function() {
       regime: detectMarketRegime(candles),
       microFractal: getMicroFractal(candles),
       rsi: tech.calculateRSI(candles.map(c => c.c), 14).slice(-1)[0],
-      bb: tech.calculateBollingerBands(candles.map(c => c.c), 20, 2)
+      bb: tech.calculateBollingerBands(candles.map(c => c.c), 20, 2),
+      adx: adxData ? adxData.adx.slice(-1)[0] : 0,
+      stoch: stochData ? { k: stochData.k.slice(-1)[0], d: stochData.d.slice(-1)[0] } : { k: 50, d: 50 }
     };
   }
 

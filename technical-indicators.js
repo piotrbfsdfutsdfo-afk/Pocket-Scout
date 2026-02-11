@@ -224,12 +224,69 @@ window.TechnicalIndicators = (function(window) {
         return { bullish, bearish, strength: Math.round(strength) };
     }
 
+    // Average Directional Index (ADX)
+    function calculateADX(candles, period = 14) {
+        if (!validateArray(candles) || candles.length < period * 2) return null;
+
+        const results = [];
+        let plusDI = [];
+        let minusDI = [];
+        let tr = [];
+        let plusDM = [];
+        let minusDM = [];
+
+        for (let i = 1; i < candles.length; i++) {
+            const h = candles[i].h;
+            const l = candles[i].l;
+            const ph = candles[i-1].h;
+            const pl = candles[i-1].l;
+            const pc = candles[i-1].c;
+
+            const currentTR = Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+            tr.push(currentTR);
+
+            const upMove = h - ph;
+            const downMove = pl - l;
+
+            if (upMove > downMove && upMove > 0) plusDM.push(upMove);
+            else plusDM.push(0);
+
+            if (downMove > upMove && downMove > 0) minusDM.push(downMove);
+            else minusDM.push(0);
+        }
+
+        const smoothedTR = calculateEMA(tr, period);
+        const smoothedPlusDM = calculateEMA(plusDM, period);
+        const smoothedMinusDM = calculateEMA(minusDM, period);
+
+        if (!smoothedTR || !smoothedPlusDM || !smoothedMinusDM) return null;
+
+        const dx = [];
+        for (let i = 0; i < smoothedTR.length; i++) {
+            const pDI = 100 * (smoothedPlusDM[i] / smoothedTR[i]);
+            const mDI = 100 * (smoothedMinusDM[i] / smoothedTR[i]);
+            const currentDX = 100 * (Math.abs(pDI - mDI) / (pDI + mDI || 1));
+            dx.push(currentDX);
+            plusDI.push(pDI);
+            minusDI.push(mDI);
+        }
+
+        const adx = calculateEMA(dx, period);
+
+        return {
+            adx: adx,
+            plusDI: plusDI.slice(-adx.length),
+            minusDI: minusDI.slice(-adx.length)
+        };
+    }
+
     const library = {
         calculateSMA,
         calculateEMA,
         calculateBollingerBands,
         calculateRSI,
         calculateStochastic,
+        calculateADX,
         detectRSIDivergence
     };
     

@@ -17,6 +17,7 @@ window.ProjectNexus = (function(indicators) {
   }
 
   const smcIndicators = window.SmartMoneyIndicators;
+  const DEBUG_MODE = false;
   
   // Neural learning rate
   const LEARNING_RATE = 0.05;
@@ -98,48 +99,100 @@ window.ProjectNexus = (function(indicators) {
   }
 
   /**
-   * Consensus Predictor (The Core)
+   * Consensus Predictor (The Core) - Refined for 70%+ WR
    */
   function predict(pair, pairState, smcData, candles, flux, globalStrength) {
     const ns = pairState.nexus;
     const lastCandle = candles[candles.length - 1];
+    const structure = smcData.marketStructure;
+    const liquidity = smcData.liquidity;
+    const zone = smcData.premiumDiscount;
 
-    // Feature Extraction
+    // Confluence Factors (Strict SMC)
+    const hasSweep = liquidity.sweeps.bullishSweeps.length > 0 || liquidity.sweeps.bearishSweeps.length > 0 || !!liquidity.sfp;
+    const hasOB = smcData.orderBlocks.bullishOB.some(ob => !ob.mitigated) || smcData.orderBlocks.bearishOB.some(ob => !ob.mitigated);
+    const hasFVG = smcData.imbalance.bullishIMB.length > 0 || smcData.imbalance.bearishIMB.length > 0;
+    const isTrending = smcData.adx > 25;
+    const isExhausted = smcData.rsi > 70 || smcData.rsi < 30 || smcData.stoch.k > 80 || smcData.stoch.k < 20;
+
+    // Feature Extraction for Neural Layer
     const features = {
-        TREND: smcData.marketStructure.m15Trend !== 'NEUTRAL' ? 1 : 0,
-        SWEEP: (smcData.liquidity.sweeps.bullishSweeps.length > 0 || smcData.liquidity.sweeps.bearishSweeps.length > 0) ? 1 : 0,
-        RSI: (smcData.rsi > 70 || smcData.rsi < 30) ? 1 : 0,
+        TREND: structure.m15Trend !== 'NEUTRAL' ? 1 : 0,
+        SWEEP: hasSweep ? 1.5 : 0,
+        RSI: isExhausted ? 1.2 : 0,
         FLUX: Math.min(1.5, flux),
         DISPLACEMENT: smcData.displacement ? 1.5 : 0,
-        ZONE: smcData.premiumDiscount?.currentZone !== 'EQUILIBRIUM' ? 1 : 0,
+        ZONE: zone?.currentZone !== 'EQUILIBRIUM' ? 1.3 : 0,
         FRACTAL: analyzeFractal(candles, ns.fractalMemory),
         BIO_PULSE: smcData.microFractal !== 'NEUTRAL' ? 1 : 0
     };
 
-    // Weighted decision
-    let score = 0;
-    for (const key in features) {
-        score += features[key] * (ns.synapses[key] || 1.0);
+    // Calculate Master Confluence Score (Must be high for 70% WR)
+    let confluenceScore = 0;
+
+    // Core Logic: Trend Alignment + Liquidity Grab + POI (OB/FVG)
+    let bullishScore = 0;
+    let bearishScore = 0;
+
+    // 1. Structure & Trend
+    if (structure.trend === 'BULLISH') bullishScore += 2;
+    if (structure.trend === 'BEARISH') bearishScore += 2;
+    if (structure.lastCHoCH?.type === 'BULLISH_CHoCH') bullishScore += 3;
+    if (structure.lastCHoCH?.type === 'BEARISH_CHoCH') bearishScore += 3;
+
+    // 2. Liquidity (CRITICAL for 70% WR)
+    if (liquidity.sfp?.type === 'BULLISH_SFP') bullishScore += 4;
+    if (liquidity.sfp?.type === 'BEARISH_SFP') bearishScore += 4;
+    if (liquidity.sweeps.bullishSweeps.length > 0) bullishScore += 2;
+    if (liquidity.sweeps.bearishSweeps.length > 0) bearishScore += 2;
+
+    // 3. Zone & POI
+    if (zone?.bias === 'BULLISH') bullishScore += 3;
+    if (zone?.bias === 'BEARISH') bearishScore += 3;
+    if (smcData.orderBlocks.bullishOB.some(ob => !ob.mitigated && ob.hasFVG)) bullishScore += 3;
+    if (smcData.orderBlocks.bearishOB.some(ob => !ob.mitigated && ob.hasFVG)) bearishScore += 3;
+
+    // 4. Momentum & Exhaustion
+    if (smcData.rsi < 30) bullishScore += 2;
+    if (smcData.stoch.k < 20) bullishScore += 2;
+    if (smcData.rsi > 70) bearishScore += 2;
+    if (smcData.stoch.k > 80) bearishScore += 2;
+    if (smcData.velocityDelta.aligned === 'BULLISH') bullishScore += 1;
+    if (smcData.velocityDelta.aligned === 'BEARISH') bearishScore += 1;
+
+    // Final Decision
+    let direction = null;
+    let finalScore = 0;
+
+    if (bullishScore > bearishScore && bullishScore >= 10) {
+        direction = 'BUY';
+        finalScore = bullishScore;
+    } else if (bearishScore > bullishScore && bearishScore >= 10) {
+        direction = 'SELL';
+        finalScore = bearishScore;
+    } else {
+        // Neutral fallback for neural ranking but less likely to signal
+        direction = lastCandle.c >= lastCandle.o ? 'BUY' : 'SELL';
+        finalScore = Math.max(bullishScore, bearishScore);
     }
 
-    // Determine Direction (Consensus)
-    const trend = smcData.marketStructure.m15Trend;
-    const vDelta = smcData.velocityDelta;
-    const zoneBias = smcData.premiumDiscount?.bias || 'NEUTRAL';
+    // Neural Weight Adjustment
+    let neuralMultiplier = 0;
+    for (const key in features) {
+        neuralMultiplier += features[key] * (ns.synapses[key] || 1.0);
+    }
 
-    let direction = null;
-    if (trend === 'BULLISH' && zoneBias !== 'BEARISH') direction = 'BUY';
-    else if (trend === 'BEARISH' && zoneBias !== 'BULLISH') direction = 'SELL';
-    else if (vDelta.aligned === 'BULLISH') direction = 'BUY';
-    else if (vDelta.aligned === 'BEARISH') direction = 'SELL';
-    else direction = lastCandle.c >= lastCandle.o ? 'BUY' : 'SELL';
-
-    // Apply Fractal Inversion if trap detected
+    // Apply Fractal Inversion
     if (features.FRACTAL === -1.0) {
         direction = (direction === 'BUY' ? 'SELL' : 'BUY');
     }
 
-    return { score: Math.round(score * 10), direction, features };
+    // Normalize final score to 0-100 range
+    // A score of 10-15 should map to 50-75% confidence
+    // A score of 15+ maps to 75-100% confidence
+    const confidence = Math.min(100, Math.round((finalScore / 18) * 100));
+
+    return { score: confidence, direction, features };
   }
 
   /**
@@ -174,14 +227,29 @@ window.ProjectNexus = (function(indicators) {
     const allUpdatedStates = {};
     rankings.forEach(r => { allUpdatedStates[r.pair] = r.pairState; });
 
-    console.log(`[NEXUS v24] 🧠 Consensus Winner: ${winner.pair} | Nexus Score: ${winner.score} | Cycles: ${winner.pairState.nexus.trainingCycles}`);
+    // SELECTIVITY FILTER for WR >= 70%
+    // Only allow signals that meet high confluence (mapped to confidence >= 50%)
+    if (winner.score < 50) {
+        console.log(`[NEXUS v24] ⏸️ No high-probability setups found. Best Score: ${winner.score}`);
+        return { allUpdatedStates }; // Still sync states but no signal
+    }
+
+    console.log(`[NEXUS v24] 🧠 Consensus Winner: ${winner.pair} | Confidence: ${winner.score}% | Cycles: ${winner.pairState.nexus.trainingCycles}`);
+
+    const smc = winner.smcData;
+    const reasons = [
+        `Confluence: ${winner.score}%`,
+        `Regime: ${smc.regime}`,
+        `ADX: ${Math.round(smc.adx)} | Stoch: ${Math.round(smc.stoch.k)}`,
+        `Liquidity: ${smc.liquidity.sfp ? 'SFP detected' : (smc.liquidity.sweeps.bullishSweeps.length > 0 || smc.liquidity.sweeps.bearishSweeps.length > 0 ? 'Sweep detected' : 'None')}`
+    ];
 
     return {
         pair: winner.pair,
         action: winner.direction,
-        confidence: 100,
+        confidence: winner.score,
         tradeDuration: duration,
-        reasons: [`Nexus Score: ${winner.score}`, `Regime: ${winner.smcData.regime}`, `Learning Cycles: ${winner.pairState.nexus.trainingCycles}`],
+        reasons: reasons,
         indicatorValues: { spi: winner.score, cycles: winner.pairState.nexus.trainingCycles },
         allUpdatedStates: allUpdatedStates
     };

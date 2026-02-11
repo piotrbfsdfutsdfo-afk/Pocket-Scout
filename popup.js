@@ -118,6 +118,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <span style="color:${actionColor}">${lastSignal.action}</span>
                         @ ${formatPrice(lastSignal.entryPrice, lastSignal.pair)}
                         <br/><span style="font-size:10px; opacity:0.7">CONF: ${conf}% | DUR: ${dur}m | ${time} ${resTag}</span>
+                        <div style="font-size:9px; opacity:0.5; margin-top:4px;">${lastSignal.reasons.slice(1).join(' | ')}</div>
                     `;
                 }
 
