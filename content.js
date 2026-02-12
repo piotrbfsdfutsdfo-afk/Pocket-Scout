@@ -36,6 +36,7 @@
   let mostRecentSignal = null;
   // Global next signal time (one signal per interval across ALL pairs)
   let globalNextSignalAt = 0;
+  let lastSignalTriggeredAtMinute = -1;
   
   // --- Frozen Price Detection Variables ---
   // Map of pair -> timestamp of last price update
@@ -526,8 +527,10 @@
       let finalConfidence = Math.min(100, Math.max(0, spi));
 
       // Streak Protection (v20.1 legacy maintained)
+      // v24.3: Only cap if we haven't seen a shadow win recently
       if (consecutiveLossesCount >= 3) {
-          finalConfidence = Math.min(60, finalConfidence);
+          finalConfidence = Math.min(70, finalConfidence);
+          console.log(`[NEXUS] 🛡️ Streak Protection active (${consecutiveLossesCount} losses). Conf capped at 70%.`);
       }
 
       console.log(`[NEXUS AI] 🧠 Decision: ${winner.pair} | Score: ${spi} | Confidence: ${finalConfidence}% | Cycles: ${winner.indicatorValues.cycles}`);
@@ -651,7 +654,8 @@
         payoutEligible: payout >= MIN_PAYOUT_PERCENT,
         isHot: !!(pairEngineStates[pair]?.deepSight?.winRate >= 80 && pairEngineStates[pair]?.deepSight?.virtualHistory?.length >= 3),
         spi: pairEngineStates[pair]?.deepSight?.lastSPI || 0,
-        cycles: pairEngineStates[pair]?.nexus?.trainingCycles || 0
+        cycles: pairEngineStates[pair]?.nexus?.trainingCycles || 0,
+        mode: pairEngineStates[pair]?.nexus?.lastModelStatus || 'SMC_STANDARD'
       };
     }
     
@@ -781,7 +785,20 @@
           // NEXUS AI: Synapse Sync & Shadow Learning
           const engine = window.ProjectNexus;
           if (engine && engine.syncOracle) {
-            pairEngineStates[pair] = engine.syncOracle(pair, pairEngineStates[pair], price);
+            const prevState = pairEngineStates[pair];
+            pairEngineStates[pair] = engine.syncOracle(pair, prevState, price);
+
+            // v24.3 Shadow Recovery: If a shadow trade just won, decrement consecutive losses
+            if (prevState && pairEngineStates[pair]) {
+                const prevHist = prevState.deepSight?.virtualHistory || [];
+                const currHist = pairEngineStates[pair].deepSight?.virtualHistory || [];
+                if (currHist.length > prevHist.length && currHist[currHist.length-1] === 'WIN') {
+                    if (consecutiveLossesCount > 0) {
+                        consecutiveLossesCount--;
+                        console.log(`[NEXUS] 🌟 Shadow Recovery! Streak reduced to ${consecutiveLossesCount}.`);
+                    }
+                }
+            }
           }
         }
       }
@@ -792,18 +809,19 @@
   }
 
   /**
-   * Signal loop (v20)
+   * Signal loop (v24.3 Omni)
    * Synchronized with the clock for forced snapshots.
-   * V20 Quantum Decider strictly follows user-defined interval boundaries.
+   * Ensures exactly one high-probability signal per interval boundary.
    */
   function signalLoop() {
     const now = new Date();
     const min = now.getMinutes();
     const sec = now.getSeconds();
 
-    // Trigger every X minutes at :00 second
-    if (sec === 0 && min % signalIntervalMinutes === 0) {
-      console.log(`[PS v20] ⏱️ Global ${signalIntervalMinutes}-min snapshot triggered at ${now.toLocaleTimeString()}`);
+    // Trigger every X minutes at :00 second, only once per minute
+    if (sec === 0 && (min % signalIntervalMinutes === 0) && (min !== lastSignalTriggeredAtMinute)) {
+      lastSignalTriggeredAtMinute = min;
+      console.log(`[NEXUS OMNI] ⏱️ Global ${signalIntervalMinutes}-min Snapshot triggered at ${now.toLocaleTimeString()}`);
       generateForcedBestSignal();
     }
   }

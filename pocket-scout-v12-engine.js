@@ -19,19 +19,20 @@ window.ProjectNexus = (function(indicators) {
   const smcIndicators = window.SmartMoneyIndicators;
   const DEBUG_MODE = false;
   
-  // Neural learning rate
-  const LEARNING_RATE = 0.05;
+  // Neural learning rate - increased for v24.3 Omni
+  const LEARNING_RATE = 0.12;
+  const SHADOW_INVERSION_THRESHOLD = 0.45; // Below this WR, invert signals
 
-  // Default Synapse Weights (Initial State)
+  // Default Synapse Weights (Initial State) - Refined for OMNI
   const DEFAULT_SYNAPSES = {
-    TREND: 1.0,
-    SWEEP: 1.2,
-    RSI: 0.8,
-    FLUX: 1.5,
-    DISPLACEMENT: 1.3,
-    ZONE: 1.0,
-    FRACTAL: 2.0,
-    BIO_PULSE: 1.2 // Neural Micro-Fractal Weight
+    TREND: 1.5,
+    SWEEP: 2.0,
+    RSI: 0.5,
+    FLUX: 3.5,        // Institutional participation priority
+    DISPLACEMENT: 2.5, // Momentum priority
+    ZONE: 1.2,
+    FRACTAL: 1.5,
+    BIO_PULSE: 1.0
   };
 
   /**
@@ -99,104 +100,88 @@ window.ProjectNexus = (function(indicators) {
   }
 
   /**
-   * Consensus Predictor (The Core) - Refined for 70%+ WR
+   * Consensus Predictor (The Core) - Refined for NEXUS OMNI
    */
   function predict(pair, pairState, smcData, candles, flux, globalStrength) {
     const ns = pairState.nexus;
+    const ds = pairState.deepSight;
     const lastCandle = candles[candles.length - 1];
     const structure = smcData.marketStructure;
     const liquidity = smcData.liquidity;
     const zone = smcData.premiumDiscount;
 
-    // Confluence Factors (Strict SMC)
+    // Calculate Inversion Status (Ghost Mode)
+    const shadowWR = ds.virtualHistory.length >= 5 ?
+                     (ds.virtualHistory.filter(h => h === 'WIN').length / ds.virtualHistory.length) : 0.5;
+    const isInverted = shadowWR < SHADOW_INVERSION_THRESHOLD && ds.virtualHistory.length >= 5;
+
+    // Confluence Factors
     const hasSweep = liquidity.sweeps.bullishSweeps.length > 0 || liquidity.sweeps.bearishSweeps.length > 0 || !!liquidity.sfp;
-    const hasOB = smcData.orderBlocks.bullishOB.some(ob => !ob.mitigated) || smcData.orderBlocks.bearishOB.some(ob => !ob.mitigated);
-    const hasFVG = smcData.imbalance.bullishIMB.length > 0 || smcData.imbalance.bearishIMB.length > 0;
-    const isTrending = smcData.adx > 25;
     const isExhausted = smcData.rsi > 70 || smcData.rsi < 30 || smcData.stoch.k > 80 || smcData.stoch.k < 20;
 
     // Feature Extraction for Neural Layer
     const features = {
-        TREND: structure.m15Trend !== 'NEUTRAL' ? 1 : 0,
-        SWEEP: hasSweep ? 1.5 : 0,
-        RSI: isExhausted ? 1.2 : 0,
-        FLUX: Math.min(1.5, flux),
-        DISPLACEMENT: smcData.displacement ? 1.5 : 0,
-        ZONE: zone?.currentZone !== 'EQUILIBRIUM' ? 1.3 : 0,
+        TREND: structure.m15Trend !== 'NEUTRAL' ? 1.5 : 0,
+        SWEEP: hasSweep ? 2.0 : 0,
+        RSI: isExhausted ? 0.5 : 0,
+        FLUX: Math.min(2.0, flux * 1.5),
+        DISPLACEMENT: smcData.displacement ? 2.0 : 0,
+        ZONE: zone?.currentZone !== 'EQUILIBRIUM' ? 1.0 : 0,
         FRACTAL: analyzeFractal(candles, ns.fractalMemory),
-        BIO_PULSE: smcData.microFractal !== 'NEUTRAL' ? 1 : 0
+        BIO_PULSE: smcData.microFractal !== 'NEUTRAL' ? 1.0 : 0
     };
 
-    // Calculate Master Confluence Score (Must be high for 70% WR)
-    let confluenceScore = 0;
+    // Neural Confidence Component
+    let neuralSum = 0;
+    for (const key in features) {
+        neuralSum += features[key] * (ns.synapses[key] || 1.0);
+    }
 
-    // Core Logic: Trend Alignment + Liquidity Grab + POI (OB/FVG)
+    // Core Logic (Setup Ranking)
     let bullishScore = 0;
     let bearishScore = 0;
 
-    // 1. Structure & Trend
-    if (structure.trend === 'BULLISH') bullishScore += 2;
-    if (structure.trend === 'BEARISH') bearishScore += 2;
-    if (structure.lastCHoCH?.type === 'BULLISH_CHoCH') bullishScore += 3;
-    if (structure.lastCHoCH?.type === 'BEARISH_CHoCH') bearishScore += 3;
-
-    // 2. Liquidity (CRITICAL for 70% WR)
-    if (liquidity.sfp?.type === 'BULLISH_SFP') bullishScore += 4;
-    if (liquidity.sfp?.type === 'BEARISH_SFP') bearishScore += 4;
-    if (liquidity.sweeps.bullishSweeps.length > 0) bullishScore += 2;
-    if (liquidity.sweeps.bearishSweeps.length > 0) bearishScore += 2;
-
-    // 3. Zone & POI
-    if (zone?.bias === 'BULLISH') bullishScore += 3;
-    if (zone?.bias === 'BEARISH') bearishScore += 3;
-    if (smcData.orderBlocks.bullishOB.some(ob => !ob.mitigated && ob.hasFVG)) bullishScore += 3;
-    if (smcData.orderBlocks.bearishOB.some(ob => !ob.mitigated && ob.hasFVG)) bearishScore += 3;
-
-    // 4. Momentum & Exhaustion
-    if (smcData.rsi < 30) bullishScore += 2;
-    if (smcData.stoch.k < 20) bullishScore += 2;
-    if (smcData.rsi > 70) bearishScore += 2;
-    if (smcData.stoch.k > 80) bearishScore += 2;
-    if (smcData.velocityDelta.aligned === 'BULLISH') bullishScore += 1;
-    if (smcData.velocityDelta.aligned === 'BEARISH') bearishScore += 1;
-
-    // Final Decision
-    let direction = null;
-    let finalScore = 0;
-
-    if (bullishScore > bearishScore && bullishScore >= 10) {
-        direction = 'BUY';
-        finalScore = bullishScore;
-    } else if (bearishScore > bullishScore && bearishScore >= 10) {
-        direction = 'SELL';
-        finalScore = bearishScore;
-    } else {
-        // Neutral fallback for neural ranking but less likely to signal
-        direction = lastCandle.c >= lastCandle.o ? 'BUY' : 'SELL';
-        finalScore = Math.max(bullishScore, bearishScore);
+    // 1. Institutional Flux & Displacement (HEAVY WEIGHT for OMNI)
+    if (flux > 1.2) {
+        if (lastCandle.c > lastCandle.o) bullishScore += 6;
+        else bearishScore += 6;
+    }
+    if (smcData.displacement) {
+        if (smcData.displacement.type === 'BULLISH') bullishScore += 5;
+        else bearishScore += 5;
     }
 
-    // Neural Weight Adjustment
-    let neuralMultiplier = 0;
-    for (const key in features) {
-        neuralMultiplier += features[key] * (ns.synapses[key] || 1.0);
+    // 2. Liquidity Grab (SFP/Sweep)
+    if (liquidity.sfp?.type === 'BULLISH_SFP') bullishScore += 5;
+    if (liquidity.sfp?.type === 'BEARISH_SFP') bearishScore += 5;
+
+    // 3. Structure & Zone
+    if (structure.trend === 'BULLISH' && zone?.bias !== 'BEARISH') bullishScore += 4;
+    if (structure.trend === 'BEARISH' && zone?.bias !== 'BULLISH') bearishScore += 4;
+
+    // Final Setup Probability (0-100)
+    let direction = bullishScore >= bearishScore ? 'BUY' : 'SELL';
+    let rawScore = Math.max(bullishScore, bearishScore);
+
+    // Model Decision
+    if (isInverted) {
+        direction = direction === 'BUY' ? 'SELL' : 'BUY';
     }
 
-    // Apply Fractal Inversion
+    // Fractal Check (Final Filter/Inversion)
     if (features.FRACTAL === -1.0) {
-        direction = (direction === 'BUY' ? 'SELL' : 'BUY');
+        direction = direction === 'BUY' ? 'SELL' : 'BUY';
     }
 
-    // Normalize final score to 0-100 range
-    // A score of 10-15 should map to 50-75% confidence
-    // A score of 15+ maps to 75-100% confidence
-    const confidence = Math.min(100, Math.round((finalScore / 18) * 100));
+    // Normalize Confidence: Base Confluence + Neural Multiplier
+    // Target 50-100% range for signals
+    const confidence = Math.min(100, 50 + Math.round(rawScore * 2) + Math.round(neuralSum));
 
-    return { score: confidence, direction, features };
+    return { score: confidence, direction, features, modelStatus: isInverted ? 'GHOST_INVERSION' : 'SMC_STANDARD' };
   }
 
   /**
-   * Entry points for content script
+   * Entry points for content script - Global Snapshot Omni Version
    */
   function processSnapshot(allPairsData, duration, globalStrength) {
     const pairs = Object.keys(allPairsData);
@@ -206,42 +191,67 @@ window.ProjectNexus = (function(indicators) {
       let { candles, pairState, flux } = allPairsData[pair];
 
       if (!pairState || !pairState.nexus) {
-        pairState = initNexusState(pair, pairState);
+          pairState = initNexusState(pair, pairState);
       }
 
       const smcData = smcIndicators.analyzeSmartMoney(candles, pair);
       if (!smcData) return;
 
-      const { score, direction, features } = predict(pair, pairState, smcData, candles, flux, globalStrength);
+      const { score, direction, features, modelStatus } = predict(pair, pairState, smcData, candles, flux, globalStrength);
       pairState.deepSight.lastSPI = score;
-      pairState.nexus.lastFeatures = features; // Store for backprop
+      pairState.nexus.lastFeatures = features;
+      pairState.nexus.lastModelStatus = modelStatus;
 
-      rankings.push({ pair, direction, score, smcData, pairState, features });
+      // Fractal pattern for memory
+      const last3 = candles.slice(-3).map(c => (c.c > c.o ? 'B' : 'S')).join('');
+
+      // Create Shadow Trade for learning (all pairs get one every snapshot)
+      pairState.deepSight.shadowTrades.push({
+          direction: direction,
+          startPrice: candles[candles.length - 1].c,
+          expiry: Date.now() + (duration * 60 * 1000),
+          pattern: last3,
+          features: { ...features }
+      });
+
+      rankings.push({ pair, direction, score, smcData, pairState, features, modelStatus });
     });
 
     if (rankings.length === 0) return null;
 
-    rankings.sort((a, b) => b.score - a.score);
+    // Relative Global Ranking: Always pick the absolute best pair
+    rankings.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+
+        // Tie-breaker: Global Currency Strength
+        const aPairParts = a.pair.replace('_OTC', '').split('/');
+        const bPairParts = b.pair.replace('_OTC', '').split('/');
+        if (aPairParts.length === 2 && bPairParts.length === 2) {
+            const aStrength = (globalStrength[aPairParts[0]] || 0) - (globalStrength[aPairParts[1]] || 0);
+            const bStrength = (globalStrength[bPairParts[0]] || 0) - (globalStrength[bPairParts[1]] || 0);
+            return Math.abs(bStrength) - Math.abs(aStrength); // Prefer pair with stronger directional bias
+        }
+        return 0;
+    });
     const winner = rankings[0];
 
     const allUpdatedStates = {};
-    rankings.forEach(r => { allUpdatedStates[r.pair] = r.pairState; });
+    rankings.forEach(r => {
+        // Limit shadow trades to 10 per pair to prevent memory bloat
+        if (r.pairState.deepSight.shadowTrades.length > 10) {
+            r.pairState.deepSight.shadowTrades.shift();
+        }
+        allUpdatedStates[r.pair] = r.pairState;
+    });
 
-    // SELECTIVITY FILTER for WR >= 70%
-    // Only allow signals that meet high confluence (mapped to confidence >= 50%)
-    if (winner.score < 50) {
-        console.log(`[NEXUS v24] ⏸️ No high-probability setups found. Best Score: ${winner.score}`);
-        return { allUpdatedStates }; // Still sync states but no signal
-    }
-
-    console.log(`[NEXUS v24] 🧠 Consensus Winner: ${winner.pair} | Confidence: ${winner.score}% | Cycles: ${winner.pairState.nexus.trainingCycles}`);
+    console.log(`[NEXUS OMNI] 🧠 Global Snapshot Winner: ${winner.pair} | Conf: ${winner.score}% | Mode: ${winner.modelStatus}`);
 
     const smc = winner.smcData;
     const reasons = [
-        `Confluence: ${winner.score}%`,
-        `Regime: ${smc.regime}`,
+        `Conf: ${winner.score}% | Mode: ${winner.modelStatus}`,
+        `Flux: ${smc.velocityDelta.aligned} | Regime: ${smc.regime}`,
         `ADX: ${Math.round(smc.adx)} | Stoch: ${Math.round(smc.stoch.k)}`,
-        `Liquidity: ${smc.liquidity.sfp ? 'SFP detected' : (smc.liquidity.sweeps.bullishSweeps.length > 0 || smc.liquidity.sweeps.bearishSweeps.length > 0 ? 'Sweep detected' : 'None')}`
+        `Liq: ${smc.liquidity.sfp ? 'SFP detected' : (smc.liquidity.sweeps.bullishSweeps.length > 0 ? 'Sweep' : 'Clean')}`
     ];
 
     return {
@@ -272,8 +282,8 @@ window.ProjectNexus = (function(indicators) {
             if (ds.virtualHistory.length > 20) ds.virtualHistory.shift();
 
             // NEXUS Learning: Backpropagate from shadow outcome
-            if (pairState.nexus.lastFeatures) {
-                backpropagate(pairState, res, pairState.nexus.lastFeatures);
+            if (trade.features) {
+                backpropagate(pairState, res, trade.features);
             }
 
             // Store fractal result

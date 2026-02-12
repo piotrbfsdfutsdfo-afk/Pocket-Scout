@@ -60,15 +60,16 @@ document.addEventListener('DOMContentLoaded', function() {
             const price = formatPrice(status.price, pair);
             const cycles = status.cycles || 0;
             const spi = status.spi || 0;
+            const mode = status.mode || 'SMC_STANDARD';
             
-            const warmupText = status.warmupComplete ? 'SYNCS' : `WARMUP ${status.candles}/${warmupTarget}`;
-            const warmupColor = status.warmupComplete ? 'var(--success)' : 'var(--accent)';
+            const warmupText = status.warmupComplete ? (mode === 'GHOST_INVERSION' ? 'GHOST' : 'SYNCS') : `WARMUP ${status.candles}/${warmupTarget}`;
+            const warmupColor = status.warmupComplete ? (mode === 'GHOST_INVERSION' ? '#f472b6' : 'var(--success)') : 'var(--accent)';
 
             html += `
-                <div class="node-card">
+                <div class="node-card" style="${mode === 'GHOST_INVERSION' ? 'border-color: #f472b6' : ''}">
                     <div class="node-name">
                         <span>${name}</span>
-                        <span class="synapse-act">SPI: ${spi}</span>
+                        <span class="synapse-act" style="color:${mode === 'GHOST_INVERSION' ? '#f472b6' : ''}">SPI: ${spi}</span>
                     </div>
                     <div class="node-price">${price}</div>
                     <div class="node-meta">
@@ -113,8 +114,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     const conf = lastSignal.confidence || 0;
                     const dur = lastSignal.duration || 0;
 
+                    const mode = lastSignal.reasons[0]?.includes('GHOST') ? 'GHOST' : 'SMC';
+                    const modeColor = mode === 'GHOST' ? '#f472b6' : 'var(--nexus)';
+
                     lastSignalContentEl.innerHTML = `
-                        <span style="color:var(--dim)">${lastSignal.pair.replace('_OTC','')}</span>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                            <span style="color:var(--dim)">${lastSignal.pair.replace('_OTC','')}</span>
+                            <span style="font-size:9px; background:${modeColor}; color:#000; padding:1px 4px; border-radius:3px; font-weight:bold;">${mode} MODE</span>
+                        </div>
                         <span style="color:${actionColor}">${lastSignal.action}</span>
                         @ ${formatPrice(lastSignal.entryPrice, lastSignal.pair)}
                         <br/><span style="font-size:10px; opacity:0.7">CONF: ${conf}% | DUR: ${dur}m | ${time} ${resTag}</span>
